@@ -663,6 +663,58 @@ describe("managed TypeRef resolution scopes", () => {
   );
 });
 
+describe("managed MethodSpec compressed integer diagnostics", () => {
+  it.each([
+    ["valid", "0a010e", null],
+    ["truncated", "0a80", "truncated compressed integer"],
+    ["reserved", "0ae0", "reserved compressed integer"],
+  ] as const)(
+    "preserves the call target and row-owned diagnostic for a %s MethodSpec count",
+    (_case, hex, detail) => {
+      const bytes = buildManagedPeFixture({
+        memberRefSignature: genericRef,
+        methodSpecMethods: [(1 << 1) | 1],
+        methodSpecInstantiation: Buffer.from(hex, "hex"),
+        ilBody: tokenBody([[call, 0x2b00_0001]]),
+      });
+      const pe = readManagedPeLayout(bytes);
+      if (pe.cli === null) throw new Error("fixture has no CLI header");
+      const { rva, size } = pe.cli.metadata;
+      const layout = readManagedMetadataLayout(
+        bytes,
+        pe.rvaToOffset(rva, size, "cli.metadata"),
+        size,
+      );
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+
+      expect(
+        result.call_edges.map((edge) => [
+          edge.target_kind,
+          edge.target_name,
+          edge.target_declaring_type,
+        ]),
+      ).toEqual([["method-spec", ".ctor", attribute]]);
+      expect(result.coverage).toEqual({
+        state: detail === null ? "complete" : "partial",
+        issues:
+          detail === null
+            ? []
+            : [
+                {
+                  code: "invalid-blob",
+                  scope: "metadata.MethodSpec:0x2b000001",
+                  offset: metadataRowOffset(layout, 43, 1),
+                  detail,
+                },
+              ],
+      });
+    },
+  );
+});
+
 describe("managed MethodSpec call targets", () => {
   it("names generic method calls after the method they instantiate", () => {
     const result = inspect({
