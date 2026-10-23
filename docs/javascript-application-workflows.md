@@ -353,9 +353,16 @@ files; multiple canonical-equivalent candidates remain unknown.
 
 Each historical source file is classified as `unchanged`, `modified`,
 `removed`, `split`, `merged`, `duplicated`, or `unknown`. Multiple equally
-scored path mappings form a static split inference. Multiple current
-nodes with the exact historical digest are duplicated; multiple historical
-paths with exact identity to one current node are merged. `removed` requires
+scored mappings to distinct current source occurrences form a static split
+inference. Multiple occurrences with the exact historical digest are duplicated;
+multiple historical paths with exact identity to one occurrence are merged.
+A whole-file asset and its source-module/export-binding representations count
+as one occurrence only when their evidence identifies the same literal path
+and backing artifact digest without conflicting source digests. Separate paths
+(including distinct Unicode spellings), different bytes, source-map originals,
+and bundled modules retain distinct occurrences; one content-addressed asset
+can carry observations of several file copies. All candidate evidence remains
+available, and every representation of a selected occurrence remains mapped. `removed` requires
 complete historical and application inventories. The comparison analyzes and
 returns all source files, candidate nodes, and matching signals represented in
 the supplied graphs. Partial inventories remain unknown where absence cannot

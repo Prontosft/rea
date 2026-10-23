@@ -30,6 +30,7 @@ import {
   javascriptApplicationAnalysisResultSchema,
   type JavaScriptApplicationAnalysisResult,
 } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { sourceToBundleComparisonResultSchema } from "../../../src/domain/javascript/sourceToBundleComparisonSchemas.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { parseJavaScriptApplicationGraph } from "../../../src/domain/javascript/javascriptApplicationGraph.js";
 import { z } from "zod";
@@ -1815,6 +1816,103 @@ it("retains bundled isolated-world contextBridge APIs through dedicated and gene
     );
   }
 });
+
+it.each([
+  {
+    syntax: "literal",
+    source: (value: number) => `export const value = ${value};\n`,
+  },
+  {
+    syntax: "return shapes",
+    source: (value: number) =>
+      `export function value() { return { value: ${value} }; }\n`,
+  },
+])(
+  "compares file occurrences rather than asset, module, and export representations through the CLI ($syntax)",
+  async ({ source }) => {
+    const root = await createTestTempDirectory("rea-cli-source-occurrences-");
+    const previous = join(root, "previous");
+    await mkdir(previous);
+    await writeFile(join(previous, "main.js"), source(1));
+    const reference = await runCli([
+      "import-reference-source",
+      previous,
+      "--json",
+    ]);
+    for (const [name, value, copies, status] of [
+      ["same", 1, 1, "unchanged"],
+      ["changed", 2, 1, "modified"],
+      ["copies", 1, 2, "duplicated"],
+    ] as const) {
+      const current = join(root, name);
+      await mkdir(current);
+      await writeFile(
+        join(current, "package.json"),
+        JSON.stringify({ name: "fixture", version: "1.0.0", main: "main.js" }),
+      );
+      await writeFile(join(current, "main.js"), source(value));
+      if (copies === 2)
+        await copyFile(join(current, "main.js"), join(current, "copy.js"));
+      const application = await runCli([
+        "analyze-javascript-application",
+        current,
+        "--json",
+      ]);
+      const evidence = parseEvidence(
+        await runCliWithRequestFile(root, "compare-source-to-bundle", {
+          reference,
+          application,
+        }),
+      );
+      const result = sourceToBundleComparisonResultSchema.parse(
+        evidence.normalized_result,
+      );
+      const mapping = result.items.find(
+        ({ source_path }) => source_path === "main.js",
+      );
+      expect(mapping?.status).toBe(status);
+      expect(mapping?.candidates.length).toBeGreaterThanOrEqual(3);
+      expect(mapping?.current_node_ids).toEqual(
+        mapping?.candidates.map(({ current_node_id }) => current_node_id),
+      );
+      for (const nodeId of mapping?.current_node_ids ?? [])
+        expect(result.unmapped_current_node_ids).not.toContain(nodeId);
+      if (name === "same") {
+        const evidencePath = join(root, "comparison.json");
+        await writeFile(evidencePath, JSON.stringify(evidence));
+        for (const [offset, candidate] of (
+          mapping?.candidates ?? []
+        ).entries()) {
+          const page = await runCli([
+            "inspect-analysis-view",
+            JSON.stringify({
+              source: { kind: "evidence-file", path: evidencePath },
+              view: {
+                kind: "source-to-bundle",
+                collection: "candidates",
+                source_paths: ["main.js"],
+                offset,
+                limit: 1,
+              },
+            }),
+            "--json",
+          ]);
+          expect(page).toMatchObject({
+            normalized_result: {
+              items: [
+                { current_node_id: candidate.current_node_id, mapped: true },
+              ],
+              coverage: {
+                total: mapping?.candidates.length,
+                exhausted: offset === (mapping?.candidates.length ?? 0) - 1,
+              },
+            },
+          });
+        }
+      }
+    }
+  },
+);
 
 const runCli = async (
   arguments_: readonly string[],

@@ -34,6 +34,10 @@ interface CurrentProjection {
   readonly node: ApplicationNode;
   readonly digests: ReadonlySet<string>;
   readonly paths: readonly CurrentPath[];
+  readonly occurrences: readonly {
+    readonly key: string;
+    readonly path: string | null;
+  }[];
 }
 
 /** Indexed current-node facts used by deterministic source matching. */
@@ -161,6 +165,22 @@ export const candidateHasDigest = (
   nodeId: string,
 ): boolean => (index.nodes.get(nodeId)?.digests.size ?? 0) > 0;
 
+/** Physical file occurrences when proven; otherwise retain distinct graph identities. */
+export const candidateOccurrenceKeys = (
+  index: SourceToBundleCandidateIndex,
+  nodeId: string,
+  matchedPaths?: readonly string[],
+): readonly string[] =>
+  index.nodes
+    .get(nodeId)
+    ?.occurrences.filter(
+      ({ path }) =>
+        matchedPaths === undefined ||
+        path === null ||
+        matchedPaths.includes(path),
+    )
+    .map(({ key }) => key) ?? [nodeId];
+
 /** Score one indexed candidate from explicit, caller-visible signals. */
 export const scoreSourceToBundleCandidate = (
   source: SourceFile,
@@ -231,7 +251,52 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
     node,
     digests,
     paths: uniquePaths(paths),
+    occurrences: currentOccurrences(node, digests),
   };
+};
+
+// Only whole-file assets and their explicitly identified semantic representations
+// share occurrences. Bundler modules and source-map originals can have the same
+// backing file/path while describing independent destinations or source bytes.
+const currentOccurrences = (
+  node: ApplicationNode,
+  digests: ReadonlySet<string>,
+): CurrentProjection["occurrences"] => {
+  const roles = new Set(
+    node.observations.map(({ properties }) => properties.semantic_role),
+  );
+  const fileRepresentation =
+    ((node.kind === "javascript-asset" || node.kind === "artifact") &&
+      node.identity.strategy === "content-digest") ||
+    (node.kind === "javascript-module" &&
+      node.identity.strategy === "artifact-local-key" &&
+      ((roles.has("source-module") &&
+        node.identity.namespace === "source-module") ||
+        (roles.has("export-binding") &&
+          node.identity.namespace === "module-export")));
+  if (!fileRepresentation) return [{ key: node.node_id, path: null }];
+  const occurrences = new Map<string, string>();
+  for (const observation of node.observations) {
+    const { artifact, location } = observation.evidence;
+    if (!artifact.available || !location.available)
+      return [{ key: node.node_id, path: null }];
+    const path =
+      location.value.kind === "artifact-path"
+        ? location.value.path
+        : location.value.kind === "source-range"
+          ? location.value.source
+          : null;
+    // Conflicting source bytes must not be hidden by a common backing artifact.
+    if (
+      path === null ||
+      (node.identity.strategy === "artifact-local-key" &&
+        node.identity.artifact_sha256 !== artifact.sha256) ||
+      [...digests].some((digest) => digest !== artifact.sha256)
+    )
+      return [{ key: node.node_id, path: null }];
+    occurrences.set(compositeKey(["file", artifact.sha256, path]), path);
+  }
+  return [...occurrences].map(([key, path]) => ({ key, path }));
 };
 
 const candidateSignals = (

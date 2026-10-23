@@ -15,6 +15,7 @@ import {
 import {
   buildSourceToBundleCandidateIndex,
   candidateHasDigest,
+  candidateOccurrenceKeys,
   candidateIdsForSource,
   historicalSourceFiles,
   scoreSourceToBundleCandidate,
@@ -131,6 +132,8 @@ const compareMappings = (
     const classification = classifyMapping(
       scored,
       projection.absenceComplete,
+      (nodeId, paths) =>
+        candidateOccurrenceKeys(projection.index, nodeId, paths),
       (nodeId) =>
         source.sha256 !== null && candidateHasDigest(projection.index, nodeId),
     );
@@ -183,27 +186,40 @@ const scoringModel = (): SourceToBundleComparisonResult["scoring"] => ({
 const classifyMapping = (
   candidates: readonly SourceToBundleCandidate[],
   absenceComplete: boolean,
+  occurrenceKeys: (
+    nodeId: string,
+    paths?: readonly string[],
+  ) => readonly string[],
   digestComparable: (nodeId: string) => boolean,
 ): ClassifiedMapping => {
   const exact = candidates.filter((candidate) =>
     hasSignal(candidate, "exact-source-digest"),
   );
-  if (exact.length === 1)
+  const occurrences = (selected: readonly SourceToBundleCandidate[]) =>
+    new Set(selected.flatMap(({ current_node_id: id }) => occurrenceKeys(id)));
+  const mappedNodes = (selected: ReadonlySet<string>) =>
+    candidates
+      .filter(({ current_node_id: id }) =>
+        occurrenceKeys(id).some((key) => selected.has(key)),
+      )
+      .map(({ current_node_id: id }) => id);
+  const exactOccurrences = occurrences(exact);
+  if (exactOccurrences.size === 1)
     return {
       status: "unchanged",
       confidence: "exact",
-      currentNodeIds: [exact[0]?.current_node_id ?? ""].filter(Boolean),
+      currentNodeIds: mappedNodes(exactOccurrences),
       limitations: [
         "Exact byte identity does not establish equivalent load context or runtime behavior.",
       ],
     };
-  if (exact.length > 1)
+  if (exactOccurrences.size > 1)
     return {
       status: "duplicated",
       confidence: "exact",
-      currentNodeIds: exact.map(({ current_node_id: nodeId }) => nodeId),
+      currentNodeIds: mappedNodes(exactOccurrences),
       limitations: [
-        "The same historical source digest occurs in multiple current graph nodes.",
+        "The same historical source digest occurs in multiple distinct current source occurrences.",
       ],
     };
   const pathCandidates = candidates.filter((candidate) =>
@@ -220,13 +236,31 @@ const classifyMapping = (
     topScore === undefined
       ? []
       : pathCandidates.filter(({ score }) => score === topScore);
-  if (topPathCandidates.length === 1) {
+  const pathOccurrences = new Set(
+    topPathCandidates.flatMap((candidate) =>
+      occurrenceKeys(
+        candidate.current_node_id,
+        candidate.signals
+          .filter(
+            ({ kind }) =>
+              kind === "current-path-exact" ||
+              kind === "current-path-suffix" ||
+              kind === "source-map-original-path",
+          )
+          .flatMap(({ current_values }) => current_values),
+      ),
+    ),
+  );
+  if (pathOccurrences.size === 1) {
     const candidate = topPathCandidates[0];
-    if (candidate !== undefined && digestComparable(candidate.current_node_id))
+    if (
+      candidate !== undefined &&
+      topPathCandidates.some(({ current_node_id: id }) => digestComparable(id))
+    )
       return {
         status: "modified",
         confidence: candidate.confidence === "high" ? "high" : "medium",
-        currentNodeIds: [candidate.current_node_id],
+        currentNodeIds: mappedNodes(pathOccurrences),
         limitations: [
           "Location evidence links the source to the current node, but their source digests differ.",
         ],
@@ -234,22 +268,19 @@ const classifyMapping = (
     return {
       status: "unknown",
       confidence: "unknown",
-      currentNodeIds:
-        candidate === undefined ? [] : [candidate.current_node_id],
+      currentNodeIds: mappedNodes(pathOccurrences),
       limitations: [
         "Location evidence links the source to the current node, but comparable source digests are unavailable.",
       ],
     };
   }
-  if (topPathCandidates.length > 1)
+  if (pathOccurrences.size > 1)
     return {
       status: "split",
       confidence: "medium",
-      currentNodeIds: topPathCandidates.map(
-        ({ current_node_id: nodeId }) => nodeId,
-      ),
+      currentNodeIds: mappedNodes(pathOccurrences),
       limitations: [
-        "Multiple equally scored current nodes retain the historical source path; this is a static split inference, not runtime proof.",
+        "Multiple equally scored distinct current source occurrences retain the historical source path; this is a static split inference, not runtime proof.",
       ],
     };
   if (candidates.length > 0)
@@ -290,11 +321,9 @@ const markMergedMappings = (
 ): SourceToBundleComparisonItem[] => {
   const sourcesByNode = new Map<string, SourceToBundleComparisonItem[]>();
   for (const item of items) {
-    if (item.status !== "unchanged" || item.current_node_ids.length !== 1)
-      continue;
-    const nodeId = item.current_node_ids[0];
-    if (nodeId === undefined) continue;
-    sourcesByNode.set(nodeId, [...(sourcesByNode.get(nodeId) ?? []), item]);
+    if (item.status !== "unchanged") continue;
+    for (const nodeId of item.current_node_ids)
+      sourcesByNode.set(nodeId, [...(sourcesByNode.get(nodeId) ?? []), item]);
   }
   const mergedSources = new Set(
     [...sourcesByNode.values()]

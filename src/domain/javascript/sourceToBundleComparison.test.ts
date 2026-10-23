@@ -29,6 +29,97 @@ const HASH = {
 } as const;
 const EVIDENCE_ID = `ev_${"a".repeat(64)}`;
 
+describe("distinct current source occurrences", () => {
+  it.each([
+    {
+      paths: ["src/unchanged.ts"],
+      digest: HASH.unchanged,
+      status: "unchanged",
+    },
+    { paths: ["src/unchanged.ts"], digest: HASH.modified, status: "modified" },
+    {
+      paths: ["src/unchanged.ts", "copy.ts"],
+      digest: HASH.unchanged,
+      status: "duplicated",
+    },
+    {
+      paths: ["src/unchanged.ts", "copy.ts"],
+      digest: HASH.modified,
+      status: "modified",
+    },
+    {
+      paths: ["a/src/unchanged.ts", "b/src/unchanged.ts"],
+      digest: HASH.modified,
+      status: "split",
+    },
+  ])(
+    "counts literal file occurrences, not representations: $status $paths",
+    ({ paths, digest, status }) => {
+      const asset = fileAsset(paths, digest);
+      const modules = paths.map((path) => fileModule(path, digest));
+      const nodes = [asset, ...modules];
+      const result = comparePathToNodes("src/unchanged.ts", nodes);
+      const mapping = item(result, "src/unchanged.ts");
+      expect(mapping.status).toBe(status);
+      expect(mapping.candidates).toHaveLength(
+        status === "modified" && paths.length === 2 ? 2 : nodes.length,
+      );
+      expect(mapping.current_node_ids).toContain(asset.node_id);
+      expect(mapping.current_node_ids).toContain(modules[0]?.node_id);
+      if (status === "modified" && paths.length === 2)
+        expect(mapping.current_node_ids).not.toContain(modules[1]?.node_id);
+    },
+  );
+
+  it("does not collapse conflicting source digests or bundled modules sharing a backing file", () => {
+    const path = "src/unchanged.ts";
+    const asset = fileAsset([path], HASH.modified);
+    const conflicting = fileModule(path, HASH.modified, HASH.removed);
+    expect(
+      item(comparePathToNodes(path, [asset, conflicting]), path).status,
+    ).toBe("split");
+    const bundled = moduleNode("bundled", {
+      path,
+      source_sha256: HASH.modified,
+    });
+    expect(item(comparePathToNodes(path, [asset, bundled]), path).status).toBe(
+      "split",
+    );
+  });
+
+  it("merges historical aliases even when the selected file has several representations", () => {
+    const nodes = [
+      fileAsset(["bundle.ts"], HASH.merged),
+      fileModule("bundle.ts", HASH.merged),
+    ];
+    const reference = historicalGraph("complete", [
+      "src/merged-a.ts",
+      "src/merged-b.ts",
+    ]);
+    const graph = createJavaScriptApplicationGraph({
+      schema: "JavaScriptApplicationGraph",
+      coverage: applicationGraph("complete").coverage,
+      limitations: [],
+      nodes,
+      root_node_ids: nodes.map(({ node_id }) => node_id),
+      edges: [],
+    });
+    const result = compareSourceToBundle({
+      reference,
+      application: {
+        evidenceId: EVIDENCE_ID,
+        rootArtifactSha256: HASH.artifact,
+        graph,
+      },
+    });
+    expect(result.items.map(({ status }) => status)).toEqual([
+      "merged",
+      "merged",
+    ]);
+    expect(result.unmapped_current_node_ids).toEqual([]);
+  });
+});
+
 describe("historical source to bundle comparison", () => {
   it("matches an unchanged JSON source artifact by its exact content digest", () => {
     const path = "src/data.json";
@@ -538,6 +629,44 @@ describe("source to bundle complete metadata", () => {
     expect(parsed.limitations).toHaveLength(1_001);
   });
 });
+
+const fileAsset = (paths: readonly string[], digest: string) =>
+  createJavaScriptApplicationNode({
+    kind: "javascript-asset",
+    identity: {
+      strategy: "content-digest",
+      stability: "global-exact",
+      sha256: digest,
+    },
+    observations: paths.map((path) => ({
+      label: path,
+      properties: { path },
+      evidence: artifactEvidence(digest, path),
+    })),
+  });
+
+const fileModule = (path: string, digest: string, sourceDigest = digest) =>
+  createJavaScriptApplicationNode({
+    kind: "javascript-module",
+    identity: {
+      strategy: "artifact-local-key",
+      stability: "artifact-version",
+      artifact_sha256: digest,
+      namespace: "source-module",
+      key: path,
+    },
+    observations: [
+      {
+        label: path,
+        properties: {
+          path,
+          semantic_role: "source-module",
+          source_sha256: sourceDigest,
+        },
+        evidence: artifactEvidence(digest, path),
+      },
+    ],
+  });
 
 const sourceMapNode = (
   key: string,
