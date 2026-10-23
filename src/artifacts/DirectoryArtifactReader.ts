@@ -427,6 +427,14 @@ export class DirectoryArtifactReader implements ArtifactReader {
     return source;
   }
 
+  /** Handles still retained, as a close failure and its leases label them. */
+  get cleanupResources(): readonly string[] {
+    return [
+      ...this.#files.values(),
+      ...[...this.#directories].map((owner) => owner.handle.path),
+    ];
+  }
+
   async close(): Promise<void> {
     const failures: unknown[] = [];
     for (const [owner, path] of this.#files) {
@@ -455,13 +463,7 @@ export class DirectoryArtifactReader implements ArtifactReader {
         `Directory artifact cleanup failed: ${reason}`,
         {
           cause: new AggregateError(failures),
-          cleanup: {
-            reason,
-            resources: [
-              ...this.#files.values(),
-              ...[...this.#directories].map((owner) => owner.handle.path),
-            ],
-          },
+          cleanup: { reason, resources: this.cleanupResources },
         },
       );
     }

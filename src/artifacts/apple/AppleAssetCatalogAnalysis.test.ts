@@ -9,6 +9,8 @@ import * as processOutput from "../../process/ExecFileOutput.js";
 import { encodeNibArchiveFixture } from "./NibArchive.fixture.js";
 import type { analyzeInterfaceBuilderBundle } from "./InterfaceBuilderAnalysis.js";
 import { ArtifactReaderFailure } from "../ArtifactReader.js";
+import { translateArtifactFailure } from "../ArtifactOperationFailure.js";
+import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   analyzeAppleAssetCatalogs,
   collectInterfaceBuilderResourceKeys,
@@ -144,6 +146,155 @@ describe("Apple asset catalog application workflow", () => {
     expect(result.limitations).not.toContainEqual(
       expect.stringContaining("No compiled Assets.car catalog"),
     );
+  });
+});
+
+describe("Apple asset catalog cleanup composition", () => {
+  // A coincident close failure must not erase the diagnosis the caller acts on.
+  it.each([
+    {
+      label: "integrity",
+      mutate: true,
+      reason: "integrity",
+      detail: "Asset catalog changed during inspection",
+    },
+    {
+      label: "format",
+      mutate: false,
+      reason: "format",
+      detail: "assetutil returned invalid JSON",
+    },
+  ])(
+    "retains the primary $label catalog failure when directory cleanup fails",
+    async ({ mutate, reason, detail }) => {
+      const bundle = await createTestTempDirectory("rea-asset-catalog-close-");
+      const resources = join(bundle, "Contents", "Resources");
+      await mkdir(resources, { recursive: true });
+      await writeFile(join(resources, "Assets.car"), "inert catalog fixture");
+      const closeFailure = new ArtifactReaderFailure(
+        "io",
+        "Directory artifact cleanup failed: close directory",
+        {
+          cleanup: {
+            reason: "close directory",
+            resources: [resources],
+          },
+        },
+      );
+      const close = vi
+        .spyOn(DirectoryArtifactReader.prototype, "close")
+        .mockRejectedValue(closeFailure);
+      try {
+        const rejected = await analyzeAppleAssetCatalogs({
+          environment: {},
+          bundlePath: bundle,
+          targetSha256: "a".repeat(64),
+          runAssetUtil: async (path) => {
+            if (mutate) await writeFile(path, "catalog mutated mid-inspection");
+            return mutate ? "[]" : "not json";
+          },
+        }).catch((cause: unknown) => cause);
+        expect(close).toHaveBeenCalled();
+        expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
+        expect(rejected).toMatchObject({
+          reason,
+          message: expect.stringContaining(detail),
+          cleanup: {
+            reason: expect.stringContaining("close directory"),
+            resources: [resources],
+          },
+        });
+        // The reader stays the exact cleanup owner for a later retry.
+        expect((rejected as ArtifactReaderFailure).cleanupLeases).toHaveLength(
+          1,
+        );
+      } finally {
+        close.mockRestore();
+      }
+    },
+  );
+
+  it("reports the cleanup failure itself when the catalog walk succeeded", async () => {
+    const bundle = await createTestTempDirectory("rea-asset-catalog-only-");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Assets.car"), "inert catalog fixture");
+    const closeFailure = new ArtifactReaderFailure(
+      "io",
+      "Directory artifact cleanup failed: close directory",
+      { cleanup: { reason: "close directory", resources: [resources] } },
+    );
+    const close = vi
+      .spyOn(DirectoryArtifactReader.prototype, "close")
+      .mockRejectedValue(closeFailure);
+    try {
+      const rejected = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        runAssetUtil: () => Promise.resolve("[]"),
+      }).catch((cause: unknown) => cause);
+      expect(rejected).toBeInstanceOf(ArtifactReaderFailure);
+      expect(rejected).toMatchObject({
+        reason: "io",
+        message: expect.stringContaining(
+          "Directory artifact cleanup failed: close directory",
+        ),
+        cleanup: { reason: "close directory" },
+      });
+      // The reader is retained as the exact owner, so release can be retried.
+      expect((rejected as ArtifactReaderFailure).cleanupLeases).toHaveLength(1);
+    } finally {
+      close.mockRestore();
+    }
+  });
+
+  it("retries the retained reader so the translated failure resolves its cleanup", async () => {
+    const bundle = await createTestTempDirectory("rea-asset-catalog-retry-");
+    const resources = join(bundle, "Contents", "Resources");
+    await mkdir(resources, { recursive: true });
+    await writeFile(join(resources, "Assets.car"), "inert catalog fixture");
+    const closeFailure = new ArtifactReaderFailure(
+      "io",
+      "Directory artifact cleanup failed: close directory",
+      { cleanup: { reason: "close directory", resources: [resources] } },
+    );
+    const close = vi
+      .spyOn(DirectoryArtifactReader.prototype, "close")
+      .mockRejectedValue(closeFailure);
+    let rejected: unknown;
+    try {
+      rejected = await analyzeAppleAssetCatalogs({
+        environment: {},
+        bundlePath: bundle,
+        targetSha256: "a".repeat(64),
+        runAssetUtil: () => Promise.resolve("[]"),
+      }).catch((cause: unknown) => cause);
+    } finally {
+      close.mockRestore();
+    }
+    if (!(rejected instanceof ArtifactReaderFailure))
+      throw new Error("Expected a retained ASAR directory cleanup failure");
+
+    // The provider translates before the client sees it; the leases must survive.
+    const translated = translateArtifactFailure(
+      "inspect_asset_catalog",
+      rejected,
+    );
+    expect(translated.cleanupIncomplete).toBe(true);
+
+    const leases = rejected.cleanupLeases ?? [];
+    expect(leases).toHaveLength(1);
+    // Releasing the lease must reach the reader that still owns the handles.
+    const retried = vi.spyOn(DirectoryArtifactReader.prototype, "close");
+    try {
+      await Promise.all(leases.map((lease) => lease.release()));
+      expect(retried).toHaveBeenCalledTimes(1);
+    } finally {
+      retried.mockRestore();
+    }
+    // Release is now confirmed, so the client no longer reports it pending.
+    expect(translated.cleanupIncomplete).toBe(false);
   });
 });
 

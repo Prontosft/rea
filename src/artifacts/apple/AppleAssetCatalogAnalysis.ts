@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
+import { AnalysisCleanupLease } from "../AnalysisCleanupLease.js";
 import { DirectoryArtifactReader } from "../DirectoryArtifactReader.js";
 import {
   ArtifactReaderFailure,
@@ -134,6 +135,11 @@ const collectAssetCatalogs = async (input: {
   }[] = [];
   const uninspected: string[] = [];
   let totalMetadataBytes = 0;
+  let walk:
+    | { readonly kind: "complete" }
+    | { readonly kind: "failed"; readonly cause: unknown } = {
+    kind: "complete",
+  };
   try {
     for await (const entry of reader.entries(input.signal)) {
       // Reader paths are `/`-separated; only an entry named exactly
@@ -159,9 +165,31 @@ const collectAssetCatalogs = async (input: {
         );
       catalogs.push(inspected.catalog);
     }
-  } finally {
-    await reader.close();
+  } catch (cause: unknown) {
+    walk = { kind: "failed", cause };
   }
+  // A failed close must report unverified release without replacing the
+  // diagnosis the caller acts on, so the walk failure stays primary. The reader
+  // is the only owner that can still release these handles, so it is retained
+  // as the exact cleanup owner for a later retry rather than named in prose.
+  try {
+    await reader.close();
+  } catch (closeCause: unknown) {
+    const cleanup = ArtifactReaderFailure.cleanupObservation(
+      closeCause,
+      input.bundlePath,
+    );
+    const leases = [
+      AnalysisCleanupLease.forCloseOwner(reader, input.bundlePath),
+    ];
+    throw ArtifactReaderFailure.withCleanup(
+      walk.kind === "failed" ? walk.cause : closeCause,
+      cleanup,
+      undefined,
+      leases,
+    );
+  }
+  if (walk.kind === "failed") throw walk.cause;
   // Without any readable catalog, unmatched resource keys would overstate an
   // absence that a skipped catalog entry may contradict.
   if (catalogs.length === 0 && uninspected.length > 0)
