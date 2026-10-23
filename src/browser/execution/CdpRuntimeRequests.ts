@@ -37,7 +37,8 @@ export class CdpRuntimeRequests {
         this.excluded += 1;
         return;
       }
-      this.#bytes += Buffer.byteLength(JSON.stringify(event.params));
+      // Retained-budget bytes are the validated metadata projection.
+      this.#bytes += Buffer.byteLength(JSON.stringify(request));
       if (this.#bytes > WEB_RUNTIME_LIMITS.retainedEventBytes)
         throw new Error(
           "Request initiator evidence exceeds its complete 8 MiB event budget.",
