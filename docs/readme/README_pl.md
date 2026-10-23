@@ -66,6 +66,8 @@ Konfigurator rejestruje REA w Twoim agencie i instaluje pasujące instrukcje pra
 
 ## Szybki start
 
+W systemie Linux Ghidra, JADX, uruchamianie narzędzi do firmware'u oraz statyczna analiza JavaScript/Electron wymagają `ps` zgodnego z procps w `PATH` REA do sprawdzania własności procesów. Kroki naprawcze opisano w `docs/installation.md` w sekcji „Linux owned-process prerequisite”.
+
 ### Skonfiguruj agenta
 
 Po zainstalowaniu Node.js i npm uruchom:
@@ -150,7 +152,7 @@ REA wymaga Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) lub 26+ (>=26.12.1) oraz n
 | Erlang BEAM                             | IFF chunks, atoms, exports, and tables                                                                                | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                    |
 | Zarejestrowane awarie systemu Linux     | Surowe rekordy note, rejestry/sygnały każdego zarejestrowanego wątku i opcjonalni kandydaci na mapowania              | pwntools dostarczone przez użytkownika w systemie Linux x64; opcjonalnie GDB/pwndbg; [zarejestrowane awarie](../recorded-crashes.md) |
 | Instalacje desktopowe                   | Kandydaci środowisk uruchomieniowych, pliki źródłowe dowodów, komponenty i dalsze kroki                               | Ograniczona inspekcja katalogów i nagłówków；[Aplikacje desktopowe](../desktop-applications.md)                                      |
-| JavaScript / Electron                   | Moduły, importy, mapy źródeł, trasy, IPC i powiązania z natywnymi dodatkami                                           | Node.js i npm; [analiza aplikacji](../javascript-application-workflows.md)                                                           |
+| JavaScript / Electron                   | Moduły, importy, mapy źródeł, trasy, IPC i powiązania z natywnymi dodatkami                                           | Node.js i npm; Linux: `ps` zgodny z procps; [analiza aplikacji](../javascript-application-workflows.md)                              |
 | Strony internetowe                      | Struktura strony, skrypty, obserwacje sieciowe i zamówione zrzuty ekranu                                              | Przeglądarka z rodziny Chrome; [analiza w przeglądarce](../browser-observation.md)                                                   |
 | Zapisane przechwycenia ruchu sieciowego | Żądania, odpowiedzi, dostępne dane przesyłane i lokalizacje źródłowe                                                  | HAR; mitmdump w systemie Linux dla natywnych przechwyceń mitmproxy; [przewodnik przechwytywania](../web-network-captures.md)         |
 | Przechwytywanie pakietów                | Punkty końcowe, DNS, TLS SNI, dystrybucja protokołów i żądania HTTP                                                   | Dostarczone przez wywołującego tshark i capinfos; [przewodnik pcap](../pcap-analysis.md)                                             |
