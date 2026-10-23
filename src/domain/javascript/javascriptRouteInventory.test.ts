@@ -51,6 +51,54 @@ it("coalesces exact patterns while retaining independent occurrences and stable 
   expect(result.inventory_id).toBe(repeated.inventory_id);
   expect(result.coverage.application_routes).toBe("unknown");
 });
+it("retains resolved index routes with source provenance and complete enumeration", () => {
+  const result = build([
+    source(
+      "routes.ts",
+      `const INDEX=true; createBrowserRouter([{index:(INDEX as boolean),Component:Home},{path:'/parent',children:[{index:INDEX,Component:Home}]}]);`,
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/", "/parent"]);
+  expect(result.occurrences).toHaveLength(3);
+  expect(result.occurrences).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        route_id: result.routes[0]!.id,
+        unprefixed_path: "/",
+        origin: "source-syntax",
+        mechanism: "nested-route-object",
+        source_range: expect.objectContaining({ start: expect.any(Object) }),
+      }),
+    ]),
+  );
+  expect(result.unknowns).toEqual([]);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "complete",
+    candidate_enumeration: "complete",
+    application_routes: "unknown",
+  });
+});
+it("marks unresolved index interpretation as partial while retaining child paths", () => {
+  const result = build([
+    source(
+      "routes.js",
+      `const INDEX=choose(); createBrowserRouter([{index:INDEX,children:[{path:'child'}]}]);`,
+    ),
+  ]);
+  expect(result.routes.map(({ path }) => path)).toEqual(["/child"]);
+  expect(result.unknowns).toEqual([
+    expect.objectContaining({
+      kind: "interpretation",
+      reason: expect.stringContaining("index flag"),
+      source_range: expect.objectContaining({ start: expect.any(Object) }),
+    }),
+  ]);
+  expect(result.coverage).toMatchObject({
+    source_parsing: "complete",
+    candidate_enumeration: "partial",
+    application_routes: "unknown",
+  });
+});
 it("chooses deterministic primary provenance when sources have equal confidence", () => {
   const inputs = [
     source("one.js", `router.push('/reports');`),

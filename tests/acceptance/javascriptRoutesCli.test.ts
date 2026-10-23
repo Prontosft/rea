@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
+import { z } from "zod";
 import { readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -12,6 +13,96 @@ const routeViewFromEvidence = (evidence: unknown) =>
   javaScriptRoutesViewResultSchema.parse(
     parseEvidence(evidence).normalized_result,
   );
+
+cliTest(
+  "retains resolved index routes and reports unresolved flags through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-index-routes-");
+    const cases = [
+      ["literal", "", "true", "js", ["/"]],
+      ["alias", "const INDEX=true;", "INDEX", "js", ["/"]],
+      ["wrapper", "", "(true as const)", "ts", ["/"]],
+      ["wrapped-alias", "const INDEX=true;", "(INDEX as boolean)", "ts", ["/"]],
+      ["false", "const INDEX=false;", "INDEX", "js", []],
+      ["dynamic", "const INDEX=choose();", "INDEX", "js", []],
+    ] as const;
+    for (const [name, prefix, flag, extension, paths] of cases) {
+      const path = join(root, name);
+      await mkdir(path);
+      await writeFile(
+        join(path, "package.json"),
+        JSON.stringify({
+          name: "index-fixture",
+          private: true,
+          type: "module",
+        }),
+      );
+      await writeFile(
+        join(path, `routes.${extension}`),
+        `import {createBrowserRouter} from 'react-router';${prefix}export const router=createBrowserRouter([{index:${flag},Component:Home}]);function Home(){return null;}`,
+      );
+      const response = await cli.run({
+        arguments: [
+          "analyze-javascript-application",
+          path,
+          "--evidence_output",
+          join(root, `${name}-evidence.json`),
+          "--detail",
+          "summary",
+          "--view",
+          JSON.stringify({
+            kind: "javascript-routes",
+            collection: "routes",
+            fields: ["path"],
+          }),
+          "--json",
+        ],
+      });
+      expect(
+        response.exitCode,
+        `${name}: ${response.stdout}\n${response.stderr}`,
+      ).toBe(0);
+      const envelope = z.object({ summary: z.unknown() }).parse(response.json);
+      const view = routeViewFromEvidence(envelope.summary);
+      expect(view.items, name).toEqual(
+        paths.map((path) => expect.objectContaining({ path })),
+      );
+      expect(view.source_coverage, name).toMatchObject({
+        source_parsing: "complete",
+        candidate_enumeration: name === "dynamic" ? "partial" : "complete",
+        application_routes: "unknown",
+      });
+      if (name === "dynamic") {
+        const unknowns = await cli.run({
+          arguments: [
+            "analyze-javascript-application",
+            path,
+            "--evidence_output",
+            join(root, `${name}-unknowns-evidence.json`),
+            "--detail",
+            "summary",
+            "--view",
+            JSON.stringify({
+              kind: "javascript-routes",
+              collection: "unknowns",
+            }),
+            "--json",
+          ],
+        });
+        expect(unknowns.exitCode, unknowns.stderr).toBe(0);
+        const unknownEnvelope = z
+          .object({ summary: z.unknown() })
+          .parse(unknowns.json);
+        expect(routeViewFromEvidence(unknownEnvelope.summary).items).toEqual([
+          expect.objectContaining({
+            kind: "interpretation",
+            reason: expect.stringContaining("index flag"),
+          }),
+        ]);
+      }
+    }
+  },
+);
 
 const interceptedSource = "export default function Photo(){return null;}";
 const independentPaths = [

@@ -975,6 +975,7 @@ export class JavaScriptRouteScan {
     node: t.Node,
     site: t.Node | undefined,
     index: JavaScriptBindingIndex,
+    selection: "source" | "at-read" = "source",
   ): t.Node | undefined {
     const seen = new Set<t.Node>();
     for (;;) {
@@ -982,10 +983,20 @@ export class JavaScriptRouteScan {
       if (!t.isIdentifier(node)) return node;
       if (seen.has(node) || !this.#queue(node)) return;
       seen.add(node);
-      const initializer = semanticStableInitializer(
-        index.bindingForReferenceAt(node),
-        index.bindings,
-      );
+      let binding = index.bindingForReferenceAt(node);
+      if (binding === undefined) return;
+      if (selection === "at-read") {
+        // Ownership discovery retains possible sources; a boolean flag needs
+        // proof at the read that this initializer already ran.
+        const read = semanticBindingAtRead(
+          binding,
+          node,
+          index.bindings.parentsByNode,
+        );
+        if (read.status !== "ordered" || !read.hasDefiniteInitializer) return;
+        binding = read.binding;
+      }
+      const initializer = semanticStableInitializer(binding, index.bindings);
       if (
         initializer === undefined ||
         initializer.projection.length !== 0 ||
@@ -1433,8 +1444,21 @@ export class JavaScriptRouteScan {
         };
         emit = true;
       } else if (!typed) {
-        const value = own.get("index")?.value;
+        const field = own.get("index");
+        const value =
+          field === undefined
+            ? undefined
+            : this.#resolve(field.value, site, index, "at-read");
         emit = t.isBooleanLiteral(value) && value.value;
+        if (
+          (field !== undefined && !t.isBooleanLiteral(value)) ||
+          fields.dynamicNames.has("index")
+        )
+          this.#unknown(
+            mechanism,
+            field?.value ?? node,
+            "The index flag is not a statically resolved boolean.",
+          );
       }
       if (emit && link !== undefined) {
         const segments: JavaScriptRouteSegment[] = [];
