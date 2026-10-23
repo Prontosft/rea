@@ -342,3 +342,52 @@ describe("queries the state can always answer", () => {
     });
   });
 });
+
+describe("case-insensitive search across word-form variants", () => {
+  // "ΟΣ" lowercases to "ος" (final sigma ς), while a standalone "Σ"
+  // lowercases to "σ" — plain toLowerCase made the row unfindable by its
+  // own exact substring (issue #6750).
+  const GREEK: StateEntity[] = [
+    { id: "1", name: "ΟΣ" },
+    { id: "2", name: "Alpha" },
+  ].map((fields) => ({
+    type: "/api/items",
+    collection: "/api/items",
+    id: fields.id,
+    fields,
+    view_fields: [],
+    record_ordinals: [],
+  }));
+  const greekIds = (query: string) =>
+    evaluateQuery(
+      { q: { role: "search", fields: ["name"] } },
+      singleQueryValues(`?q=${query}`)!,
+      GREEK,
+    )?.page.map((row) => row.id);
+
+  it.each([
+    ["Ο", ["1"]],
+    ["Σ", ["1"]],
+    ["ΟΣ", ["1"]],
+  ])("finds the row for %s", (query, expected) => {
+    expect(greekIds(query)).toEqual(expected);
+  });
+
+  it("lets the learner explain a line whose row only matches after folding", () => {
+    const values = singleQueryValues("q=Σ")!;
+    const choices = lineChoices(values, [GREEK[0]!.fields]);
+    const learned = learnQuery([
+      {
+        ordinal: 0,
+        values,
+        listed: ["1"],
+        choices,
+        entities: GREEK,
+      },
+    ]);
+    expect(learned).not.toBeNull();
+    expect(learned!.parameters).toEqual({
+      q: { role: "search", fields: ["name"] },
+    });
+  });
+});

@@ -105,17 +105,27 @@ const holds = (field: JsonValue | undefined, value: string): boolean => {
     : textOf(field) === value || names(field);
 };
 
+/**
+ * Case-fold a string for case-insensitive matching. Plain `toLowerCase` maps
+ * a Greek capital sigma (U+03A3) at the end of a word to the final form ς
+ * (U+03C2), while a standalone "Σ" lowercases to the medial σ — so an exact
+ * substring like "ΟΣ" inside "ΟΣ" stops matching itself. Collapsing ς to σ
+ * makes the fold position-independent, matching how users type the letter.
+ */
+const caseFold = (value: string): string =>
+  value.toLowerCase().replaceAll("ς", "σ");
+
 const contains = (
   entity: StateEntity,
   fields: readonly string[],
   term: string,
 ): boolean => {
-  const needle = term.toLowerCase();
+  const needle = caseFold(term);
   return (
     needle === "" ||
     fields.some((field) => {
       const value = entity.fields[field];
-      return typeof value === "string" && value.toLowerCase().includes(needle);
+      return typeof value === "string" && caseFold(value).includes(needle);
     })
   );
 };
@@ -368,13 +378,13 @@ const isUrl = (value: string): boolean =>
  * other than URLs, which a name or slug often repeats; an item the term matched only in URLs adds those.
  */
 const searchFields = (items: readonly JsonObject[], term: string): string[] => {
-  const needle = term.toLowerCase();
+  const needle = caseFold(term);
   if (needle === "") return [];
   const fields = new Set<string>();
   for (const item of items) {
     const matching = Object.keys(item).filter((field) => {
       const value = item[field];
-      return typeof value === "string" && value.toLowerCase().includes(needle);
+      return typeof value === "string" && caseFold(value).includes(needle);
     });
     const plain = matching.filter((field) => !isUrl(item[field] as string));
     for (const field of plain.length > 0 ? plain : matching) fields.add(field);
