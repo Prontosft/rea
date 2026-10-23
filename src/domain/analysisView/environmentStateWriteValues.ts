@@ -56,17 +56,16 @@ const readIsoClock = (value: string): ClockReading | undefined => {
   const zone = match[9] ?? "";
   const offsetMinutes = zoneMinutes(zone);
   if (offsetMinutes === undefined) return undefined;
-  const local = Date.UTC(
-    year as number,
-    (month as number) - 1,
-    day as number,
+  // Set the literal year: Date.UTC maps numeric years 0–99 into 1900–1999.
+  const rolled = new Date(0);
+  rolled.setUTCFullYear(year as number, (month as number) - 1, day as number);
+  const local = rolled.setUTCHours(
     hour as number,
     minute as number,
     second as number,
     Number(`${fraction}000`.slice(0, 3)),
   );
-  // Date.UTC rolls invalid fields over; the round trip refuses them.
-  const rolled = new Date(local);
+  // Date setters roll invalid fields over; the round trip refuses them.
   if (
     rolled.getUTCFullYear() !== year ||
     rolled.getUTCMonth() !== (month as number) - 1 ||

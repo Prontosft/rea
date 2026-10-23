@@ -36,6 +36,46 @@ const writeCompareFiles = async (root: string) => {
 
 describe("rea environment-compare", () => {
   cliTest(
+    "classifies first-century timestamp spelling differences as clock formats",
+    async ({ cli }) => {
+      const root = await createTestTempDirectory(
+        "rea-environment-early-clock-cli-",
+      );
+      const fixture = environmentStateServeFixture(
+        timedCaptureEvidence([
+          ["GET", "/api/clock", { created_at: "0001-01-01T00:00:00Z" }],
+        ]),
+      );
+      const probe = timedCaptureEvidence([
+        ["GET", "/api/clock", { created_at: "0001-01-01 00:00:00.000Z" }],
+      ]);
+      const manifestPath = join(root, "manifest.json");
+      const capturePath = join(root, "capture.json");
+      const probePath = join(root, "probe.json");
+      await writeFile(manifestPath, JSON.stringify(fixture.manifest));
+      await writeFile(capturePath, JSON.stringify(fixture.capture));
+      await writeFile(probePath, JSON.stringify(probe));
+      const result = await cli.run({
+        arguments: [
+          "environment-compare",
+          manifestPath,
+          "--evidence",
+          capturePath,
+          "--probe",
+          probePath,
+          "--json",
+        ],
+        timeoutMs: 30_000,
+      });
+      expect(result.exitCode).toBe(0);
+      expect(result.json).toMatchObject({
+        status: "complete",
+        probes: [{ results: [{ equal: false, categories: ["clock-format"] }] }],
+      });
+    },
+  );
+
+  cliTest(
     "compares the served environment with a probe of the re-seeded application and prints the report",
     async ({ cli }) => {
       const files = await writeCompareFiles(

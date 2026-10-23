@@ -53,6 +53,25 @@ it.each<[string, number, ClockFormat, number?]>([
 );
 
 it.each([
+  ["0000-02-29T12:34:56.123456789Z", "0000-02-29 12:34:56.123456789Z", 456789],
+  ["0001-01-01T00:00:00Z", "0001-01-01 00:00:00.000Z", 0],
+  ["0099-12-31T23:30:00-01:00", "0100-01-01 00:30:00.000Z", 0],
+  ["0100-01-01T00:30:00Z", "0100-01-01 00:30:00.000Z", 0],
+] as const)(
+  "preserves the literal ISO year in %s",
+  (input, expected, subMillisecond) => {
+    expect(readClock(input)).toMatchObject({
+      ms: Date.parse(input),
+      subMillisecond,
+    });
+    expect(respellClock(input, iso(" ", 3, "Z"))).toBe(expected);
+  },
+);
+
+it.each([
+  "0000-02-30T00:00:00Z",
+  "0001-02-29T00:00:00Z",
+  "0100-02-29T00:00:00Z",
   "2026-02-30T00:00:00Z",
   "2026-02-29T00:00:00Z",
   "2026-13-01T00:00:00Z",
