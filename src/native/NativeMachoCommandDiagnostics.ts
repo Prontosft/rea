@@ -5,39 +5,39 @@ import { withoutEchoedPathHeader } from "./parsers/echoedPath.js";
 
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
-/** Recognize only dyld_info's target-specific missing-UUID refusal. */
+/** Return one settled dyld diagnostic without discarding other output. */
+const dyldFailureDiagnostic = (
+  capture: NativeCommandCapture,
+): string | null => {
+  if (
+    capture.tool !== "dyld_info" ||
+    capture.exitCode === null ||
+    capture.exitCode === 0 ||
+    capture.signal !== null
+  )
+    return null;
+  const diagnostics = [capture.stdout, capture.stderr]
+    .flatMap((output) =>
+      withoutEchoedPathHeader(output, capture.arguments.at(-1)).split(/\r?\n/u),
+    )
+    .map((line) => line.trim().replace(/^(?:dyld_info:\s*)/u, ""))
+    .filter(Boolean);
+  return diagnostics.length === 1 ? (diagnostics[0] ?? null) : null;
+};
+
+/** Keep missing-UUID admission limited to its observed stdout-only refusal. */
 export const isMissingUuidDyldFailure = (
   capture: NativeCommandCapture,
 ): boolean =>
-  capture.tool === "dyld_info" &&
-  capture.exitCode !== null &&
-  capture.exitCode !== 0 &&
-  capture.signal === null &&
-  withoutEchoedPathHeader(capture.stdout, capture.arguments.at(-1))
-    .split(/\r?\n/u)
-    .some(
-      (line) =>
-        line.trim().replace(/^(?:dyld_info:\s*)/u, "") ===
-        MISSING_UUID_DIAGNOSTIC,
-    );
+  capture.stderr.trim().length === 0 &&
+  dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
 
-/** The narrowly observed dyld refusal for an unbacked dSYM text section. */
+/** Admit the observed dSYM refusal only when no other diagnostic is present. */
 export const isUnbackedTextDyldFailure = (
   capture: NativeCommandCapture,
 ): boolean =>
-  capture.tool === "dyld_info" &&
-  capture.exitCode !== null &&
-  capture.exitCode !== 0 &&
-  capture.signal === null &&
-  [capture.stdout, capture.stderr].some((output) =>
-    withoutEchoedPathHeader(output, capture.arguments.at(-1))
-      .split(/\r?\n/u)
-      .some(
-        (line) =>
-          line.trim().replace(/^(?:dyld_info:\s*)/u, "") ===
-          "section '__TEXT/__text' has offset=0 but is not a zero-fill section type",
-      ),
-  );
+  dyldFailureDiagnostic(capture) ===
+  "section '__TEXT/__text' has offset=0 but is not a zero-fill section type";
 
 /** Complete captures come from the settled native command owner. */
 export const nativeMachoCapturedOutput = (
