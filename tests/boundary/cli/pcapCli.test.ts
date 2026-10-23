@@ -1,5 +1,9 @@
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
 import { expect, it } from "vitest";
 
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { expectConfigurationRefusal, serveCli } from "./cliServeHarness.js";
 
 it.each(["inspect-pcap-client", "inspect-pcap-capture"])(
@@ -25,6 +29,26 @@ it.each([
   );
   expectConfigurationRefusal(result, "through absolute REA_TSHARK_COMMAND");
 });
+
+it.each(["tshark", "capinfos"])(
+  "names a directory selected as %s as configuration to fix",
+  async (tool) => {
+    const root = await createTestTempDirectory("rea-pcap-tool-directory-");
+    const directory = join(root, `${tool}-directory`);
+    const file = join(root, "selected-file");
+    await mkdir(directory);
+    await writeFile(file, "#!/bin/sh\nexit 0\n");
+    const result = await serveCli(["inspect-pcap-client", "--json"], {
+      REA_TSHARK_COMMAND: tool === "tshark" ? directory : file,
+      REA_CAPINFOS_COMMAND: tool === "capinfos" ? directory : file,
+    });
+    expectConfigurationRefusal(
+      result,
+      `The selected ${tool} executable ${directory} is not a regular file`,
+    );
+    expectConfigurationRefusal(result, "through absolute REA_TSHARK_COMMAND");
+  },
+);
 
 it("names a relative tool selection as configuration to fix", async () => {
   const result = await serveCli(["inspect-pcap-client", "--json"], {

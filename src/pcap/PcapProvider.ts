@@ -366,11 +366,18 @@ export class PcapProvider {
           );
         throw cause;
       }
-      const snapshot = await this.#resources.read(
-        resolvedPath,
-        64 * 1024 * 1024,
-        signal,
-      );
+      const snapshot = await this.#resources
+        .read(resolvedPath, 64 * 1024 * 1024, signal)
+        .catch((cause: unknown) => {
+          if (cause instanceof ArtifactReaderFailure && cause.reason === "path")
+            throw new PcapConfigurationFailure(
+              `${name}_not_file`,
+              `The selected ${name} executable ${selected.command} is not a regular file.`,
+              { command: selected.command },
+              { cause },
+            );
+          throw cause;
+        });
       this.wiresharkIdentities.set(selected.command, {
         path: resolvedPath,
         identity: wiresharkExecutableIdentity(snapshot),

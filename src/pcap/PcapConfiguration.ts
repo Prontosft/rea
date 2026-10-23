@@ -160,6 +160,8 @@ export type PcapConfigurationFailureCode =
   | "capinfos_not_absolute"
   | "tshark_missing"
   | "capinfos_missing"
+  | "tshark_not_file"
+  | "capinfos_not_file"
   | "tshark_version_unresolved"
   | "capinfos_version_unresolved"
   | "tshark_version_unsupported"
