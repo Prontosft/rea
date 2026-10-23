@@ -124,7 +124,10 @@ export const PYTHON_PYC_CONST_PREVIEW_LIMIT = 80;
 export const PYTHON_PYC_INT_PREVIEW_BITS = 256;
 
 /** CPython float repr for values JSON numbers cannot carry. */
-const pythonFloatSchema = z.union([z.number(), z.enum(["inf", "-inf", "nan"])]);
+const pythonFloatSchema = z.union([
+  z.number(),
+  z.enum(["inf", "-inf", "nan", "-0.0"]),
+]);
 
 const pythonConstSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("none") }),

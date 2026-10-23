@@ -70,8 +70,9 @@ while the artifact SHA-256 continues to identify the original file bytes.
 Bytecode is not decompiled. Const strings may be truncated in the summary while
 the marshal walk still consumed the original bytes; a string summary's `bytes`
 is that marshal length. Integer consts report `bits`; their decimal `value` is
-`null` above 256 bits. Non-finite float and complex parts use CPython's `inf`,
-`-inf`, and `nan` spellings. Dictionary and set lengths follow CPython:
+`null` above 256 bits. Float and complex parts that a JSON number cannot carry
+use CPython's spellings: `inf`, `-inf`, and `nan` for non-finite values and
+`-0.0` for negative zero, so it stays distinct from the number `0`. Dictionary and set lengths follow CPython:
 unhashable keys and members fail the walk, equal set members count once, equal
 dictionary keys keep the first key object and replace only its value, code
 objects are valid keys and members only when all of their consts are hashable,

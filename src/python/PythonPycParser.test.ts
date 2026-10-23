@@ -668,6 +668,27 @@ it("reads marshal version 0 text floats inside a code object", () => {
   }
 });
 
+it("keeps negative-zero float and complex parts distinct from positive zero", () => {
+  const report = parse(
+    withConsts([
+      Buffer.concat([Buffer.from([0x67]), f64(0)]),
+      Buffer.concat([Buffer.from([0x67]), f64(-0)]),
+      Buffer.concat([Buffer.from([0x79]), f64(-0), f64(-0)]),
+      textFloat("-0.0"),
+      textComplex("0", "-0"),
+    ]),
+  );
+  expect(root(report).consts).toEqual([
+    { kind: "float", value: 0 },
+    { kind: "float", value: "-0.0" },
+    { kind: "complex", real: "-0.0", imag: "-0.0" },
+    { kind: "float", value: "-0.0" },
+    { kind: "complex", real: 0, imag: "-0.0" },
+  ]);
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+  expect(JSON.parse(JSON.stringify(report))).toEqual(report);
+});
+
 it("accepts empty code names", () => {
   const child = marshalCode("py311", { name: "", qualname: "" });
   const report = parse(

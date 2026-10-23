@@ -1546,15 +1546,17 @@ class MarshalReader {
   }
 }
 
-/** JSON has no non-finite numbers; keep CPython's repr for them. */
-const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" =>
+/** JSON numbers carry neither non-finite values nor signed zero; keep CPython's repr. */
+const jsonFloat = (value: number): number | "inf" | "-inf" | "nan" | "-0.0" =>
   Number.isNaN(value)
     ? "nan"
     : value === Infinity
       ? "inf"
       : value === -Infinity
         ? "-inf"
-        : value;
+        : Object.is(value, -0)
+          ? "-0.0"
+          : value;
 
 /**
  * Emit each distinct code object once, the top-level object first. A child

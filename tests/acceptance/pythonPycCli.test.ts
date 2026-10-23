@@ -717,3 +717,42 @@ cliTest("reports a truncated pyc as invalid input", async ({ cli }) => {
     details: { operation: "inspect_python_pyc" },
   });
 });
+
+cliTest(
+  "keeps negative-zero float and complex constants distinct through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-python-pyc-cli-zero-");
+    const path = join(root, "zero.pyc");
+    const f64 = (value: number): Buffer => {
+      const bytes = Buffer.alloc(8);
+      bytes.writeDoubleLE(value);
+      return bytes;
+    };
+    // `A = 0.0; B = -0.0; C = -0j` as CPython 3.12 marshals the constants.
+    await writeFile(
+      path,
+      Buffer.concat([
+        pythonPycHeader(3531),
+        marshalCode("py311", {
+          consts: [
+            Buffer.concat([Buffer.from([0x67]), f64(0)]),
+            Buffer.concat([Buffer.from([0x67]), f64(-0)]),
+            Buffer.concat([Buffer.from([0x79]), f64(-0), f64(-0)]),
+          ],
+        }),
+      ]),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = toolContract("inspect_python_pyc").outputSchema.parse(
+      result.json,
+    );
+    expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
+      { kind: "float", value: 0 },
+      { kind: "float", value: "-0.0" },
+      { kind: "complex", real: "-0.0", imag: "-0.0" },
+    ]);
+  },
+);
