@@ -16,46 +16,40 @@ describe("JavaScript export container coverage through authenticated Evidence", 
       before: "",
       after: ", options: {}",
       paths: ["/options"],
-      addedPaths: ["/options"],
     },
     {
       name: "empty array",
       before: "",
       after: ", options: []",
       paths: ["/options"],
-      addedPaths: ["/options"],
     },
     {
       name: "nested object",
       before: ", options: {}",
       after: ", options: { nested: {} }",
       paths: ["/options/nested"],
-      addedPaths: ["/options/nested"],
     },
     {
       name: "nested array",
       before: ", options: []",
       after: ", options: [[]]",
       paths: ["/options/0"],
-      addedPaths: ["/options/0"],
     },
     {
       name: "container subtree",
       before: "",
       after: ", options: { nested: {} }",
       paths: ["/options", "/options/nested"],
-      addedPaths: ["/options"],
     },
     {
       name: "escaped property keys",
       before: ', "a/b~c": {}',
       after: ', "a/b~c": { "d/e~f": [] }',
       paths: ["/a~1b~0c/d~1e~0f"],
-      addedPaths: ["/a~1b~0c/d~1e~0f"],
     },
   ])(
     "reports $name presence independently of unresolved values in both directions",
-    async ({ before, after, paths, addedPaths }) => {
+    async ({ before, after, paths }) => {
       const [absent, retained] = await analyzeReturns(before, after);
       for (const path of paths) {
         expect(
@@ -82,8 +76,8 @@ describe("JavaScript export container coverage through authenticated Evidence", 
           added: 0,
           removed: 0,
           changed: 0,
-          unknown: paths.length - addedPaths.length,
-          [status]: addedPaths.length,
+          unknown: 0,
+          [status]: paths.length,
         });
         expect(result.changes).toHaveLength(paths.length);
         expect(result.changes).toEqual(
@@ -91,7 +85,11 @@ describe("JavaScript export container coverage through authenticated Evidence", 
             paths.map((path) =>
               expect.objectContaining({
                 path,
-                status: addedPaths.includes(path) ? status : "unknown",
+                status,
+                presence:
+                  status === "added"
+                    ? { left: "absent", right: "present" }
+                    : { left: "present", right: "absent" },
                 discriminant: { path: "/type", value: "item" },
                 left: expect.objectContaining({
                   availability: leftAvailability,
@@ -105,20 +103,13 @@ describe("JavaScript export container coverage through authenticated Evidence", 
                   left.evidence.evidence_id,
                   right.evidence.evidence_id,
                 ],
-                limitations: addedPaths.includes(path)
-                  ? []
-                  : [
-                      "The static value or relevant parent-property coverage is incomplete.",
-                    ],
+                limitations: [],
               }),
             ),
           ),
         );
         expect(result.coverage).toMatchObject({
-          status:
-            addedPaths.length === paths.length
-              ? "complete-within-inputs"
-              : "partial",
+          status: "complete-within-inputs",
           paired_variants: 1,
           unpaired_left_variants: 0,
           unpaired_right_variants: 0,
