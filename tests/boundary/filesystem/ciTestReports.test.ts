@@ -343,6 +343,15 @@ it("runs the existing onboarding and Python producer guards from their selected 
   expect(
     jobs.docs.steps.some((step) => step.run === "npm run docs:check"),
   ).toBe(true);
+  const docsBuildIndex = jobs.docs.steps.findIndex(
+    (step) => step.run === "npm run docs:build",
+  );
+  const cleanAuthoredIndex = jobs.docs.steps.findIndex(
+    (step) => step.name === "Generation leaves authored files unchanged",
+  );
+  expect(docsBuildIndex).toBeGreaterThan(-1);
+  expect(cleanAuthoredIndex).toBeGreaterThan(-1);
+  expect(docsBuildIndex).toBeLessThan(cleanAuthoredIndex);
   expect(scripts["docs:check"]).toContain(
     "tests/conformance/readmeConsistency.test.ts",
   );
