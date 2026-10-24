@@ -23,8 +23,8 @@ export const PYINSTALLER_COOKIE_V20_BYTES = 24;
  */
 export const PYINSTALLER_COOKIE_SEARCH_BYTES = 16 * 1024 * 1024;
 
-const MAX_TOC_BYTES = 32 * 1024 * 1024;
-const MAX_TOC_ENTRIES = 100_000;
+export const MAX_TOC_BYTES = 32 * 1024 * 1024;
+export const MAX_TOC_ENTRIES = 100_000;
 const TOC_HEADER_BYTES = 18;
 
 /** Observed CArchive cookie. Offsets are relative to the archive start. */
@@ -53,9 +53,11 @@ export interface CArchiveEntry {
 }
 
 /** Runtime options and external dependencies are declarations, never local blobs. */
-export const isCArchiveDeclaration = (
-  entry: CArchiveEntry,
-): entry is CArchiveEntry & { readonly typeCode: "o" | "d" } =>
+export const isCArchiveDeclaration = <
+  Entry extends { readonly typeCode: string },
+>(
+  entry: Entry,
+): entry is Entry & { readonly typeCode: "o" | "d" } =>
   entry.typeCode === "o" || entry.typeCode === "d";
 
 /** True when a native executable has a structurally valid CArchive cookie. */
@@ -96,7 +98,12 @@ export const findPyInstallerCookie = async (
       .lastIndexOf(PYINSTALLER_COOKIE_MAGIC);
     if (relative < 0) break;
     const cookieOffset = fileSize - tailSize + relative;
-    const parsed = parseCookieAt(observed, relative, cookieOffset, fileSize);
+    const parsed = parseCArchiveCookieAt(
+      observed,
+      relative,
+      cookieOffset,
+      fileSize,
+    );
     if (parsed.ok) return parsed;
     failure = parsed.error;
     from = relative;
@@ -189,7 +196,8 @@ export const parseCArchiveToc = (
   return ok(entries);
 };
 
-const parseCookieAt = (
+/** Validate a candidate CArchive cookie at `relative` inside `tail`, checking 2.1 then 2.0 layout. */
+export const parseCArchiveCookieAt = (
   tail: Buffer,
   relative: number,
   cookieOffset: number,

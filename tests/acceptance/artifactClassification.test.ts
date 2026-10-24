@@ -75,12 +75,12 @@ cliTest.for(["jar", "zip"])(
         (item) => item.logical_path === name,
       );
       expect(occurrence).toBeDefined();
-      expect.soft(occurrence?.artifact_kind, name).not.toBe("executable");
-      expect.soft(occurrence?.artifact_format, name).not.toMatch(/^mach-o/u);
+      expect.soft(occurrence?.artifact_kind, name).toBe("executable");
+      expect.soft(occurrence?.artifact_format, name).toBe("jvm-class");
       const sha256 = createHash("sha256").update(bytes).digest("hex");
       const node = inventory.nodes.find((item) => item.sha256 === sha256);
       expect(node).toBeDefined();
-      expect.soft(node?.format, name).not.toMatch(/^mach-o/u);
+      expect.soft(node?.format, name).toBe("jvm-class");
     }
   },
 );

@@ -17,6 +17,7 @@ import { createArtifactClassificationProbe } from "../ArtifactClassificationProb
 import { artifactIdForContent } from "../../domain/artifactIdentity.js";
 import { pe } from "../../domain/binaryTarget.fixture.js";
 import type { ArtifactEntry } from "../ArtifactReader.js";
+import { inventoryCoverage } from "./reader.js";
 
 import { classifyArtifactBytesAtPath } from "../../../tests/fixtures/artifactClassification.js";
 
@@ -473,5 +474,173 @@ it("preserves path-selected inventory roles for XML content", () => {
   expect(classifyArtifactBytesAtPath("state.asar", xml)).toEqual({
     kind: "resource",
     format: "file",
+  });
+});
+
+describe("extended artifact signature classification", () => {
+  it("classifies single-stream compression formats", () => {
+    const gzipBytes = Buffer.from([0x1f, 0x8b, 0x08, 0x00]);
+    expect(classifyArtifactBytesAtPath("payload.gz", gzipBytes)).toEqual({
+      kind: "container",
+      format: "gzip",
+    });
+
+    const bzipBytes = Buffer.from([0x42, 0x5a, 0x68, 0x39]);
+    expect(classifyArtifactBytesAtPath("payload.bz2", bzipBytes)).toEqual({
+      kind: "container",
+      format: "bzip2",
+    });
+
+    const xzBytes = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
+    expect(classifyArtifactBytesAtPath("payload.xz", xzBytes)).toEqual({
+      kind: "container",
+      format: "xz",
+    });
+  });
+
+  it("classifies advanced multi-file archives", () => {
+    const sevenZipBytes = Buffer.from([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]);
+    expect(classifyArtifactBytesAtPath("archive.7z", sevenZipBytes)).toEqual({
+      kind: "container",
+      format: "7z",
+    });
+  });
+
+  it("classifies bytecode and web formats", () => {
+    const wasmBytes = Buffer.from([
+      0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("module.wasm", wasmBytes)).toEqual({
+      kind: "executable",
+      format: "wasm",
+    });
+
+    const dexBytes = Buffer.from([
+      0x64, 0x65, 0x78, 0x0a, 0x30, 0x33, 0x35, 0x00,
+    ]);
+    expect(classifyArtifactBytesAtPath("classes.dex", dexBytes)).toEqual({
+      kind: "executable",
+      format: "dex",
+    });
+  });
+
+  it("classifies database formats", () => {
+    const sqliteBytes = Buffer.concat([
+      Buffer.from("SQLite format 3\0"),
+      Buffer.alloc(84),
+    ]);
+    expect(classifyArtifactBytesAtPath("app.db", sqliteBytes)).toEqual({
+      kind: "resource",
+      format: "sqlite",
+    });
+
+    const nonTerminatedSqliteText = Buffer.from(
+      "SQLite format 3: notes on database header layout",
+      "ascii",
+    );
+    expect(
+      classifyArtifactBytesAtPath("notes.txt", nonTerminatedSqliteText).format,
+    ).toBe("file");
+  });
+
+  it("classifies JVM class files larger than 8 KiB prefix without FAT misclassification", () => {
+    const prefix = Buffer.alloc(8192);
+    prefix.writeUInt32BE(0xcafebabe, 0); // magic
+    prefix.writeUInt16BE(0, 4); // minor = 0
+    prefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    prefix.writeUInt16BE(4, 8); // constant pool count = 4 (entries 1, 2, 3)
+    // entry 1: UTF8 "Test"
+    prefix[10] = 1;
+    prefix.writeUInt16BE(4, 11);
+    prefix.write("Test", 13);
+    // entry 2: Class pointing to 1
+    prefix[17] = 7;
+    prefix.writeUInt16BE(1, 18);
+    // entry 3: UTF8 "java/lang/Object"
+    prefix[20] = 1;
+    prefix.writeUInt16BE(16, 21);
+    prefix.write("java/lang/Object", 23);
+
+    const result = classifyArtifactBytesAtPath(
+      "LargeService.class",
+      prefix,
+      65536,
+    );
+    expect(result).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // Java 1.1 (45.3) allows non-zero minor versions; pre-preview Java 8 (52.3) does not
+    const java11Prefix = Buffer.from(prefix);
+    java11Prefix.writeUInt16BE(3, 4); // minor = 3
+    java11Prefix.writeUInt16BE(45, 6); // major = 45 (Java 1.1)
+    expect(
+      classifyArtifactBytesAtPath("Legacy11.class", java11Prefix, 65536),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    const java8MinorPrefix = Buffer.from(prefix);
+    java8MinorPrefix.writeUInt16BE(3, 4); // minor = 3 (invalid for major 52)
+    java8MinorPrefix.writeUInt16BE(52, 6); // major = 52 (Java 8)
+    expect(
+      classifyArtifactBytesAtPath("Java8Minor.class", java8MinorPrefix, 65536),
+    ).toEqual({
+      kind: "resource",
+      format: "file",
+    });
+
+    const java17PreviewPrefix = Buffer.from(prefix);
+    java17PreviewPrefix.writeUInt16BE(0xffff, 4); // preview minor = 65535
+    java17PreviewPrefix.writeUInt16BE(61, 6); // major = 61 (Java 17)
+    expect(
+      classifyArtifactBytesAtPath(
+        "Preview17.class",
+        java17PreviewPrefix,
+        65536,
+      ),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+
+    // Maximal 65,535-byte CONSTANT_Utf8 in first entry (> 64 KiB)
+    const maxUtf8Class = Buffer.alloc(10 + 3 + 0xffff + 3);
+    maxUtf8Class.writeUInt32BE(0xcafebabe, 0);
+    maxUtf8Class.writeUInt16BE(0, 4);
+    maxUtf8Class.writeUInt16BE(61, 6);
+    maxUtf8Class.writeUInt16BE(3, 8); // 2 entries
+    maxUtf8Class[10] = 1; // CONSTANT_Utf8
+    maxUtf8Class.writeUInt16BE(0xffff, 11);
+    maxUtf8Class[13 + 0xffff] = 7; // CONSTANT_Class
+    maxUtf8Class.writeUInt16BE(1, 14 + 0xffff);
+    expect(
+      classifyArtifactBytesAtPath(
+        "MaxUtf8.class",
+        maxUtf8Class,
+        maxUtf8Class.length,
+      ),
+    ).toEqual({
+      kind: "executable",
+      format: "jvm-class",
+    });
+  });
+
+  it("reports unavailable child inventory coverage for unread archives", () => {
+    for (const format of ["7z", "tar", "bzip2", "xz"] as const) {
+      const res = inventoryCoverage(format, undefined, {
+        status: "complete",
+        limitations: [],
+      });
+      expect(res.coverage).toEqual({
+        scope: "container-entries",
+        status: "unknown",
+      });
+      expect(res.limitations).toContain(
+        `${format} child inventory reader is unavailable.`,
+      );
+    }
   });
 });

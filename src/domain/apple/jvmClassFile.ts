@@ -4,6 +4,19 @@ export const MAX_JVM_CLASS_IDENTITY_BYTES = 16 * 1024 * 1024;
 export const JVM_CLASS_IDENTITY_LIMIT_REASON =
   "FAT/JVM identity is unresolved because the class identity scan exceeds the 16 MiB limit";
 
+/** Maximum prefix retained by the streaming JVM class signature probe. */
+export const MAX_JVM_CLASS_PROBE_BYTES = 10 + 3 * (3 + 0xffff);
+
+export type JvmClassProbeState = "pending" | "matched" | "rejected";
+
+/** Validate JVMS Table 4.1-A major/minor version combinations. */
+const isValidJvmVersion = (major: number, minor: number): boolean => {
+  if (major < 45 || major > 100) return false;
+  if (major === 45) return minor >= 0 && minor <= 0xffff;
+  if (major < 56) return minor === 0;
+  return minor === 0 || minor === 0xffff;
+};
+
 /** Class-file identity used to disambiguate JVM CAFEBABE from Mach-O FAT. */
 class ClassFileCursor {
   private offset = 0;
@@ -238,7 +251,7 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
   if (
     minor === null ||
     major === null ||
-    major < 45 ||
+    !isValidJvmVersion(major, minor) ||
     poolCount === null ||
     poolCount === 0
   )
@@ -265,3 +278,154 @@ export const isJvmClassFile = (bytes: Uint8Array): boolean => {
     cursor.atEnd
   );
 };
+
+type ProbeConstantStep =
+  | "need-more"
+  | "invalid"
+  | { readonly nextOffset: number; readonly extraSlots: number };
+
+const stepProbeConstant = (
+  buffered: Uint8Array,
+  view: DataView,
+  offset: number,
+  index: number,
+  poolCount: number,
+): ProbeConstantStep => {
+  const tag = buffered[offset]!;
+  if (tag === 1) {
+    if (offset + 3 > buffered.length) return "need-more";
+    const len = view.getUint16(offset + 1, false);
+    if (offset + 3 + len > buffered.length) return "need-more";
+    return { nextOffset: offset + 3 + len, extraSlots: 0 };
+  }
+  if (tag === 3 || tag === 4) {
+    return offset + 5 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 5, extraSlots: 0 };
+  }
+  if (tag === 5 || tag === 6) {
+    if (index + 1 >= poolCount) return "invalid";
+    return offset + 9 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 9, extraSlots: 1 };
+  }
+  if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+    return offset + 3 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 3, extraSlots: 0 };
+  }
+  if (
+    tag === 9 ||
+    tag === 10 ||
+    tag === 11 ||
+    tag === 12 ||
+    tag === 17 ||
+    tag === 18
+  ) {
+    return offset + 5 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 5, extraSlots: 0 };
+  }
+  if (tag === 15) {
+    return offset + 4 > buffered.length
+      ? "need-more"
+      : { nextOffset: offset + 4, extraSlots: 0 };
+  }
+  return "invalid";
+};
+
+/**
+ * Streaming, bounded JVM class signature probe.
+ * Checks magic (0xcafebabe), valid major/minor version framing, and parses
+ * up to 3 constant pool entries without requiring the complete file or EOF.
+ */
+export const createJvmClassSignatureProbe = (): {
+  write(bytes: Uint8Array): JvmClassProbeState;
+  readonly state: JvmClassProbeState;
+} => {
+  let state: JvmClassProbeState = "pending";
+  let buffered = new Uint8Array(0);
+
+  return {
+    get state() {
+      return state;
+    },
+    write(bytes: Uint8Array): JvmClassProbeState {
+      if (state !== "pending" || bytes.length === 0) return state;
+
+      const needed = Math.min(
+        MAX_JVM_CLASS_PROBE_BYTES - buffered.length,
+        bytes.length,
+      );
+      if (needed <= 0) {
+        state = "rejected";
+        return state;
+      }
+
+      const next = new Uint8Array(buffered.length + needed);
+      next.set(buffered);
+      next.set(bytes.subarray(0, needed), buffered.length);
+      buffered = next;
+
+      if (buffered.length < 4) return state;
+      const view = new DataView(
+        buffered.buffer,
+        buffered.byteOffset,
+        buffered.byteLength,
+      );
+      if (view.getUint32(0, false) !== 0xcafebabe) {
+        state = "rejected";
+        return state;
+      }
+      if (buffered.length < 10) return state;
+
+      const minor = view.getUint16(4, false);
+      const major = view.getUint16(6, false);
+      const poolCount = view.getUint16(8, false);
+      if (!isValidJvmVersion(major, minor) || poolCount === 0) {
+        state = "rejected";
+        return state;
+      }
+
+      const targetEntries = Math.min(poolCount - 1, 3);
+      if (targetEntries === 0) {
+        state = "matched";
+        return state;
+      }
+
+      let offset = 10;
+      let parsed = 0;
+      for (let index = 1; index < poolCount; index += 1) {
+        if (offset >= buffered.length) break;
+        const step = stepProbeConstant(
+          buffered,
+          view,
+          offset,
+          index,
+          poolCount,
+        );
+        if (step === "need-more") break;
+        if (step === "invalid") {
+          state = "rejected";
+          return state;
+        }
+        offset = step.nextOffset;
+        index += step.extraSlots;
+        parsed += 1;
+        if (parsed >= targetEntries) {
+          state = "matched";
+          return state;
+        }
+      }
+
+      if (buffered.length >= MAX_JVM_CLASS_PROBE_BYTES) {
+        state = "rejected";
+      }
+      return state;
+    },
+  };
+};
+
+/** Bounded framing check that distinguishes JVM class prefixes from Mach-O FAT without requiring full file EOF. */
+export const hasBoundedJvmClassFraming = (bytes: Uint8Array): boolean =>
+  createJvmClassSignatureProbe().write(bytes) === "matched";
