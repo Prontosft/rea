@@ -134,6 +134,10 @@ Snapshot creation needs temporary disk space proportional to the input size.
 Failed snapshot cleanup remains owned and is retried before later operations
 and during shutdown.
 
+Host paths follow filesystem semantics, including `..` after a directory
+symlink on POSIX. Output file locations use the canonical output directory;
+the caller's original directory selection remains in Evidence parameters.
+
 ## Interpret the result
 
 - **Package numeric declarations retain failures.** `inspect_adb_package`

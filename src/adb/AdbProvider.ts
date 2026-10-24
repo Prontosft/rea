@@ -11,12 +11,14 @@ import {
   mkdtemp,
   mkdir,
   open,
+  realpath,
   rmdir,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, extname, join, resolve } from "node:path";
+import { absoluteCallerPath } from "../filesystem/callerPath.js";
 
 import type {
   ExecutionOptions,
@@ -444,10 +446,12 @@ const prepareOutputDirectory = async (
   operation: string,
   directory: string,
 ): Promise<Result<string, AnalysisError>> => {
-  const root = resolve(directory);
+  const root = absoluteCallerPath(directory);
   try {
     await mkdir(root, { recursive: true });
     await access(root, fsConstants.W_OK);
+    // Resolve through the filesystem before child paths are joined lexically.
+    return ok(await realpath(root));
   } catch (cause) {
     return err(
       new AnalysisOutputError(
@@ -457,7 +461,6 @@ const prepareOutputDirectory = async (
       ),
     );
   }
-  return ok(root);
 };
 
 const refuseExistingTarget = async (
@@ -2461,7 +2464,7 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const localPath = resolve(input.local_path);
+    const localPath = absoluteCallerPath(input.local_path);
     const info = await stat(localPath).then(
       (value) => value,
       () => null,
@@ -2667,7 +2670,7 @@ export class AdbProvider {
     },
     signal: AbortSignal | undefined,
   ): Promise<Result<AnalysisExecution, AnalysisError>> {
-    const apkPath = resolve(input.apk_path);
+    const apkPath = absoluteCallerPath(input.apk_path);
     const info = await stat(apkPath).then(
       (value) => value,
       () => null,
@@ -3110,7 +3113,7 @@ export class AdbProvider {
       );
     return this.#withRuntimeRoot(
       operation,
-      { serial: input.serial, output_directory: directory.value },
+      input,
       { parent: directory.value, prefix: ".rea-screen-" },
       signal,
       async (stage, resources) => {
@@ -3180,7 +3183,7 @@ export class AdbProvider {
         if (publicationCloseFailure !== undefined) {
           const cleanupError = this.#cleanupError(
             operation,
-            { serial: input.serial, output_directory: directory.value },
+            input,
             [publicationCloseFailure.cause],
             [publicationCloseFailure.resource],
             completed,
