@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Cli } from "incur";
 import { afterEach, expect, it, vi } from "vitest";
 
+import * as analysisViewService from "../../src/application/analysisView/AnalysisViewService.js";
 import * as evidenceInputResolver from "../../src/application/EvidenceInputResolver.js";
 import { WasmArtifactService } from "../../src/application/wasm/WasmArtifactService.js";
 import { registerAnalysisViewCommands } from "../../src/cli/analysisViewCommands.js";
@@ -215,6 +216,12 @@ it.each([
         });
       });
     };
+    const expectedProjection =
+      phase === "projection"
+        ? await analysisViewService.inspectAnalysisView(request, undefined, {
+            evidenceBundlePath: path,
+          })
+        : undefined;
     // Observe imported production boundaries: spying on the service's own
     // export cannot intercept its lexical calls to that same function.
     const originalProject = analysisView.projectAnalysisView;
@@ -227,13 +234,13 @@ it.each([
         return projected;
       });
     const originalResolve = evidenceInputResolver.resolveEvidenceInput;
-    vi.spyOn(evidenceInputResolver, "resolveEvidenceInput").mockImplementation(
-      (...args) => {
+    const resolve = vi
+      .spyOn(evidenceInputResolver, "resolveEvidenceInput")
+      .mockImplementation((...args) => {
         const resolved = originalResolve(...args);
         if (phase === "source-resolution-failure") queueInterrupt();
         return resolved;
-      },
-    );
+      });
     const originalClose = OwnedFileHandle.prototype.close;
     const close = vi
       .spyOn(OwnedFileHandle.prototype, "close")
@@ -283,9 +290,15 @@ it.each([
       expect(project).toHaveBeenCalledTimes(
         Number(signal === "control" || phase === "projection"),
       );
+      if (phase.startsWith("authentication"))
+        expect(resolve).not.toHaveBeenCalled();
+      if (phase === "projection" || phase === "source-resolution-failure")
+        expect(resolve).toHaveBeenCalledOnce();
       if (phase === "projection") {
-        if (!projected?.ok) throw new Error("Expected a completed page");
+        if (!projected?.ok || !expectedProjection?.ok)
+          throw new Error("Expected a completed page and reference Evidence");
         const partial = parseEvidence(result.details.partial_observation);
+        expect(partial).toEqual(expectedProjection.value);
         expect(partial.normalized_result).toEqual(projected.value);
         expect(partial).toMatchObject({
           operation: "inspect_analysis_view",
