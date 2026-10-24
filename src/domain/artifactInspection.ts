@@ -298,6 +298,21 @@ const probesFor = (
   inventory: ArtifactInventoryResult,
 ): ArtifactInspectionResult["next_probes"] => {
   const format = inventory.manifest.root_format;
+  if (format === "node-sea")
+    return inventory.occurrences.some(
+      (row) =>
+        row.format_metadata?.kind === "node-sea-entry" &&
+        row.format_metadata.role === "main-script",
+    )
+      ? [
+          {
+            operation: "analyze_javascript_application",
+            rationale:
+              "Extract the SEA main script with extract_artifact, then analyze the extracted JavaScript application.",
+            authority: "ast-static-analysis",
+          },
+        ]
+      : [];
   return format === "directory"
     ? directoryProbes(inventory)
     : probesForFormat(format);
