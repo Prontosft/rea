@@ -193,3 +193,23 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// Anchoring must not turn an empty selection into the working directory.
+cliTest(
+  "rejects an empty path instead of inspecting the working directory",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-desktop-cli-empty-");
+    await mkdir(join(root, "resources"));
+    await writeFile(join(root, "resources/app.asar"), "path convention");
+    const response = await cli.run({
+      arguments: ["inspect-desktop-application", "", "--json"],
+      cwd: root,
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(response.exitCode, response.stderr).toBe(1);
+    expect(response.json).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+    });
+  },
+);

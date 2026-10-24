@@ -53,7 +53,14 @@ export const registerDesktopApplicationCommands = (
             return deliverCliAnalysisEvidence({
               run: () =>
                 service.inspect(
-                  { path: absoluteCallerPath(args.path), ...limits },
+                  {
+                    // An empty path names no file; leave it for input validation.
+                    path:
+                      args.path === ""
+                        ? args.path
+                        : absoluteCallerPath(args.path),
+                    ...limits,
+                  },
                   { signal },
                 ),
               service,
