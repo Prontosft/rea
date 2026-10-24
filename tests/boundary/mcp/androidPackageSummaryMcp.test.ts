@@ -264,14 +264,18 @@ it("rejects unavailable retention, invalid selectors and cancellation before pro
       retention,
     ),
   ).toMatchObject({ ok: false, error: { _tag: "AnalysisInputError" } });
-  expect(
-    await inspectAndroidPackage(
-      service,
-      { path: "/missing.apk", detail: "summary" },
-      retention,
-      { signal: AbortSignal.abort() },
-    ),
-  ).toMatchObject({ ok: false, error: { _tag: "AnalysisCancelledError" } });
+  const reason = { request: "stop before provider execution" };
+  const cancelled = await inspectAndroidPackage(
+    service,
+    { path: "/missing.apk", detail: "summary" },
+    retention,
+    { signal: AbortSignal.abort(reason) },
+  );
+  expect(cancelled).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!cancelled.ok) expect(cancelled.error.cause).toBe(reason);
   expect(execute).not.toHaveBeenCalled();
   const session = createTestBinarySession(() => {
     throw new Error("Unexpected deep provider");

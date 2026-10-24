@@ -1228,19 +1228,50 @@ describe("typed unavailability without dispatching", () => {
         return null;
       },
     );
-    controller.abort();
-    await expect(admitted).resolves.toMatchObject({
+    const reason = { request: "stop the queued admission" };
+    controller.abort(reason);
+    const settled = await admitted;
+    expect(settled).toMatchObject({
       ok: false,
       error: {
         _tag: "AnalysisCancelledError",
         operation: "binary_overview",
       },
     });
+    if (!settled.ok) expect(settled.error.cause).toBe(reason);
     expect(invoked).toBe(false);
     health.resolve(ok(null));
     expect((await opening).ok).toBe(true);
     await session.close();
   });
+});
+
+it("preserves the caller abort reason for admissions refused before they start", async () => {
+  const [first] = await createBinarySessionTargets();
+  const session = createTestBinarySession(createCacheProvider([]));
+  const reason = { request: "stop before admission" };
+  const admitted = await session.withAdmittedAnalysis(
+    "binary_overview",
+    AbortSignal.abort(reason),
+    async () => null,
+  );
+  expect(admitted).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError", operation: "binary_overview" },
+  });
+  if (!admitted.ok) expect(admitted.error.cause).toBe(reason);
+  const mutated = await session.withAdmittedExternalMutation(
+    first,
+    AbortSignal.abort(reason),
+    async () => resultOk(null),
+    (_value, error) => error,
+  );
+  expect(mutated).toMatchObject({
+    ok: false,
+    error: { _tag: "AnalysisCancelledError" },
+  });
+  if (!mutated.ok) expect(mutated.error.cause).toBe(reason);
+  await session.close();
 });
 
 describe("active client replacement", () => {

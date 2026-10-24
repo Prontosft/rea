@@ -782,6 +782,20 @@ describe("bounded native value dependency composition", () => {
     expect(result.error._tag).toBe("AnalysisCancelledError");
     expect(result.error.cause).toBe(reason);
   });
+
+  it("preserves the caller abort reason when the trace starts cancelled", async () => {
+    const controller = new AbortController();
+    const reason = { request: "stop before tracing" };
+    controller.abort(reason);
+    const result = await traceNativeValues(
+      analysis,
+      { procedure: "0x1000" },
+      controller.signal,
+    );
+    if (result.ok) throw new Error("Expected cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+  });
 });
 
 describe("native value trace selector origin", () => {
