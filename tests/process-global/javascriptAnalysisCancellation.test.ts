@@ -4,20 +4,20 @@ import { join } from "node:path";
 import pino from "pino";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
-import { createEvidence } from "../../../src/domain/evidence.js";
-import { createServer } from "../../../src/server/createServer.js";
+import { createEvidence } from "../../src/domain/evidence.js";
+import { createServer } from "../../src/server/createServer.js";
 import {
   createDeferred,
   createTestBinarySession,
-} from "../../fixtures/binarySession.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+} from "../fixtures/binarySession.js";
+import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 // Observe each application boundary deterministically; transport rate limiting
 // is covered by reporter tests and must not select the cancellation site.
-vi.mock("../../../src/application/ProgressReporter.js", async (original) => {
+vi.mock("../../src/application/ProgressReporter.js", async (original) => {
   const actual =
     await original<
-      typeof import("../../../src/application/ProgressReporter.js")
+      typeof import("../../src/application/ProgressReporter.js")
     >();
   return {
     ...actual,

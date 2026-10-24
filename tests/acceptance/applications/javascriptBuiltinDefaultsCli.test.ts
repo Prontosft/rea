@@ -52,8 +52,10 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
      const fs = require('node:fs'); fs.readFileSync('wrong-loader.json');
      require('node:fs').readFileSync('wrong-direct-loader.json');`,
   );
+  // These cases require CommonJS wrapper authority, not an unknown .ts
+  // compiler mode. Match the producer's explicit .cts identity.
   await writeFile(
-    join(root, "imports.ts"),
+    join(root, "imports.cts"),
     `import fs = require('node:fs'); const other = require('fs');
      const read = other.readFileSync; observe(read); read('escaped.json');
      fs.readFileSync = custom; other.readFileSync('wrong-import-equals.json');`,
@@ -65,7 +67,7 @@ it("preserves earlier and sibling effects without inventing replaced cached-modu
      require('fs').readFileSync('wrong-late-loader.json');`,
   );
   await writeFile(
-    join(root, "replacement.ts"),
+    join(root, "replacement.cts"),
     `import fs = require('fs'); const other=require('fs'); fs={}; fs.readFileSync=custom; other.readFileSync('replacement-kept.json');`,
   );
   await writeFile(
