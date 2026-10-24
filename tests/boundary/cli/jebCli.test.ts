@@ -120,6 +120,9 @@ it.each(
           code: "unsupported_target",
           details: { operation, reason: "Selected stage refused" },
         });
+        if (operation === "open_jeb_project" && stage === "primary-refusal") {
+          expect(output.details.path).toBe("sample.apk");
+        }
         expect(output.message).toContain(operation);
       }
       expect(fixture.calls).toEqual(
