@@ -6,6 +6,12 @@ which atom, export, import, lambda, and Code-header fields those chunks carry.
 It reads the file without executing bytecode and does not require an Erlang
 installation or BEAM emulator.
 
+If a stable read completes but descriptor finalization fails or receives
+cancellation, the error retains the selected path, SHA-256 and byte length as
+a `file-snapshot-hash` partial observation. It does not claim that BEAM chunks
+were decoded. Failed cleanup stays incomplete until its exact owner confirms
+release; cancellation keeps the caller's reason.
+
 ```bash
 rea inspect-erlang-beam /absolute/path/to/app.beam --json
 ```

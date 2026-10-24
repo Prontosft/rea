@@ -5,6 +5,12 @@ versions, sources, and dependency edges are embedded by cargo-auditable in one
 selected local executable or library. It reads the file without running it and
 requires no Rust installation, active binary target, Hopper, Ghidra, or IDA.
 
+If a stable read completes but descriptor finalization fails or receives
+cancellation, the error retains the selected path, SHA-256 and byte length as
+a `file-snapshot-hash` partial observation. It does not claim that Rust
+dependency metadata was decoded. Failed cleanup stays incomplete until its
+exact owner confirms release; cancellation keeps the caller's reason.
+
 ```bash
 rea inspect-rust-binary /absolute/path/to/application --json
 ```

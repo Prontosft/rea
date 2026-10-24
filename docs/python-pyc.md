@@ -6,6 +6,12 @@ header records source identity, and which nested code objects its decoded
 marshal graph contains. It reads the file without running bytecode and requires
 no Python installation, active binary target, Hopper, Ghidra, or IDA.
 
+If a stable read completes but descriptor finalization fails or receives
+cancellation, the error retains the selected path, SHA-256 and byte length as
+a `file-snapshot-hash` partial observation. It does not claim that the pyc
+header or marshal graph was decoded. Failed cleanup stays incomplete until its
+exact owner confirms release; cancellation keeps the caller's reason.
+
 ```bash
 rea inspect-python-pyc /absolute/path/to/module.pyc --json
 ```

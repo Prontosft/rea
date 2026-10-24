@@ -6,7 +6,11 @@ import {
   bindArtifactFileCleanup,
 } from "../artifacts/ArtifactFileOperation.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { readStableArtifact } from "../artifacts/readStableArtifact.js";
+import {
+  readStableArtifact,
+  completedStableArtifact,
+} from "../artifacts/readStableArtifact.js";
+import { fileSnapshotPartialObservationSchema } from "../domain/fileSnapshotObservation.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { PythonPycPort } from "../application/python/PythonPycPort.js";
@@ -164,6 +168,19 @@ const failureForPrimary = (
 
 const failureFor = (cause: unknown, input: InspectPythonPycInput) => {
   const primary = failureForPrimary(artifactFilePrimaryFacts(cause), input);
+  const snapshot = completedStableArtifact(cause);
+  if (snapshot !== undefined) {
+    // This inspect boundary acquires exactly one StableArtifactSnapshot before
+    // pyc decoding. Completion describes that read, not a decoded report.
+    primary.retainPartialObservation(
+      fileSnapshotPartialObservationSchema.parse({
+        kind: "file-snapshot-hash",
+        path: input.path,
+        sha256: snapshot.sha256,
+        bytes: snapshot.bytes.length,
+      }),
+    );
+  }
   if (!(cause instanceof ArtifactReaderFailure) || cause.cleanup === undefined)
     return primary;
   const cleanup = new ProviderCleanupError(
