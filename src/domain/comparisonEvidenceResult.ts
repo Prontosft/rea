@@ -6,6 +6,7 @@ import type { ComparisonEvidenceOperation } from "./comparisonEvidenceIdentity.j
 import type { Evidence } from "./evidence.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
+import { functionComparisonFindingLinks } from "./functionComparisonResults.js";
 import {
   functionComparisonResultSchema,
   type FunctionComparisonResult,
@@ -60,7 +61,7 @@ export function readComparisonResult(
     if (!parsed.ok) return parsed;
     const links = validateFindingLinks(
       evidence,
-      parsed.value.dimensions.flatMap(({ evidence_links }) => evidence_links),
+      functionComparisonFindingLinks(parsed.value),
     );
     if (!links.ok) return links;
     return ok({ operation, evidence, result: parsed.value });
