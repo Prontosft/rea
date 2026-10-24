@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { importVerifierSource } from "./verifier-source-loader.mjs";
 
 const require = createRequire(import.meta.url);
 const sourceWindowsProcess = new URL(
@@ -8,8 +9,10 @@ const sourceWindowsProcess = new URL(
 
 /** Load the source owner without requiring a generated dist tree. */
 export async function loadWindowsOwnedProcessClass() {
-  const { tsImport } = await import("tsx/esm/api");
-  const source = await tsImport(sourceWindowsProcess, import.meta.url);
+  const source = await importVerifierSource(
+    sourceWindowsProcess,
+    import.meta.url,
+  );
   return source.WindowsOwnedProcess;
 }
 
