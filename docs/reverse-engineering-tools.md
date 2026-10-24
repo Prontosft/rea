@@ -147,6 +147,13 @@ reports `bridge_directory_capacity_exceeded`. This release has no runtime
 override for the 25000 ms request deadline or the 256-candidate discovery
 budget. Those limits do not follow `REA_BRIDGE_MAX_REQUEST_BYTES`.
 
+Discovery reads session descriptors from the bridge directory. Both the plugin
+and client resolve this location from `REA_CUTTER_BRIDGE_DIR` with a leading
+`~` expanded. Unset, both default to `%LOCALAPPDATA%\REA\CutterBridge` on
+Windows when `LOCALAPPDATA` is set and `~/.cache/rea/cutter-bridge` otherwise.
+A value visible to only one process makes discovery look in a different
+directory from the one the plugin writes to.
+
 Terminal receipts are recovered before another command, including from a new CLI
 invocation. A signed status response also confirms completion of older bridge
 connections after its UI dispatch, preserving recovery proof for a caller whose
