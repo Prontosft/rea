@@ -121,6 +121,27 @@ describe("selected captured module artifact boundary", () => {
         );
     }
   });
+  it("reports an index past the manifest's scripts as an out-of-range selection", async () => {
+    const f = await fixture();
+    const response = await new LocalWebModuleArtifacts().load({
+      manifest_path: f.manifestPath,
+      script_index: 5,
+    });
+    if (response.ok) throw new Error("expected an out-of-range index");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [
+          {
+            path: ["script_index"],
+            reason: "out_of_range",
+            minimum: 0,
+            maximum: 0,
+          },
+        ],
+      },
+    });
+  });
   it("rejects source symlinks even when bytes have the expected digest", async () => {
     const f = await fixture();
     const real = join(f.root, "original.js");
