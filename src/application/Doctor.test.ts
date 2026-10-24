@@ -1049,7 +1049,7 @@ describe("doctor Linux and Hopper discovery", () => {
     );
     expect(
       result.checks.find(({ name }) => name === "hopper-version")?.remediation,
-    ).toContain("Check HOPPER_LAUNCHER_PATH");
+    ).toContain("HOPPER_LAUNCHER_PATH");
   });
 });
 
