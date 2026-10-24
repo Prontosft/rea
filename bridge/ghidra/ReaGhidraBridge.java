@@ -336,6 +336,54 @@ public final class ReaGhidraBridge extends HeadlessScript {
         }
     }
 
+    /**
+     * Effective request-line ceiling. The client refuses an oversized request
+     * before writing, so this bounds only what this bridge retains for one
+     * request: an out-of-band client, or a caller that raised the shared
+     * setting above this bridge's default. The value counts decoded chars, and
+     * UTF-8 bytes are never fewer than chars, so a request the client admitted
+     * under its byte ceiling is never refused here.
+     */
+    private static int bridgeRequestCharCeiling() {
+        String raw = System.getenv("REA_BRIDGE_MAX_REQUEST_BYTES");
+        if (raw == null) return 16 * 1024 * 1024;
+        try {
+            long parsed = Long.parseLong(raw.trim());
+            if (parsed <= 0) return 16 * 1024 * 1024;
+            return (int) Math.max(7464L,
+                Math.min(536870887L, parsed));
+        }
+        catch (NumberFormatException exception) {
+            return 16 * 1024 * 1024;
+        }
+    }
+
+    private static final int BRIDGE_MAX_REQUEST_CHARS = bridgeRequestCharCeiling();
+
+    /**
+     * Read one request line, refusing one above the ceiling the same way the
+     * authentication handshake refuses an oversized frame. A connection whose
+     * request exceeds the ceiling is dropped without a reply: the line's id is
+     * not yet parsed, so no correlated failure exists to send.
+     */
+    private static String readBoundedLine(
+            BufferedReader reader, int maxChars) throws IOException {
+        StringBuilder line = new StringBuilder();
+        int value;
+        while ((value = reader.read()) != -1) {
+            if (value == '\n') {
+                int length = line.length();
+                return length > 0 && line.charAt(length - 1) == '\r'
+                    ? line.substring(0, length - 1)
+                    : line.toString();
+            }
+            if (line.length() >= maxChars)
+                throw new IOException("Bridge request frame is too large");
+            line.append((char) value);
+        }
+        return line.length() == 0 ? null : line.toString();
+    }
+
     private void acceptAuthenticatedLoopbackClient(
             ServerSocketChannel server, SessionDescriptor descriptor) throws Exception {
         while (true) {
@@ -385,7 +433,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Request request = first;
             first = null;
             if (request == null) {
-                String line = reader.readLine();
+                String line = readBoundedLine(reader, BRIDGE_MAX_REQUEST_CHARS);
                 if (line == null) return;
                 try {
                     request = parseRequest(line, descriptor.token);
