@@ -91,7 +91,10 @@ const classSummary = async (
       { cause: summary.error },
     );
   const value = summary.data;
-  if (value.full_name !== request.input.class_name)
+  if (
+    value.full_name !== request.input.class_name &&
+    value.raw_name !== request.input.class_name
+  )
     inputFailure(
       request,
       "class_name",

@@ -8,7 +8,12 @@ const target = {
 };
 const classTarget = {
   ...target,
-  class_name: z.string().min(1).describe("Exact fully qualified class name"),
+  class_name: z
+    .string()
+    .min(1)
+    .describe(
+      "Exact fully qualified class name, as displayed or as the DEX binary name (Outer$Inner)",
+    ),
 };
 
 /** Caller intent for static Android inspection, independent of its engine. */

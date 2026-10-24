@@ -268,13 +268,20 @@ class ReaJadxBridge {
               .map(field -> Map.<String, Object>of("name", field.getAlias(),
                   "type", field.getType().toString(), "def_pos", 0)).toList();
           List<String> inner = node.getInnerClasses().stream().map(ClassNode::getFullName).toList();
+          String fullName = cls.getFullName();
+          String rawName = node.getRawName();
           Map<String, Object> summary = Map.of(
-              "full_name", cls.getFullName(), "name", cls.getName(),
+              "full_name", fullName, "raw_name", rawName, "name", cls.getName(),
               "method_count", methods.size(), "field_count", fields.size(),
               "inner_class_count", inner.size(), "inner_classes", inner,
               "methods", methods.stream().map(MethodSnapshot::summary).toList(), "fields", fields);
-          index.computeIfAbsent(cls.getFullName(), ignored -> new ArrayList<>())
-              .add(new ClassSnapshot(cls, methods, summary));
+          ClassSnapshot snapshot = new ClassSnapshot(cls, methods, summary);
+          // Address a class by its displayed name or its exact DEX binary name. JADX rewrites
+          // nested and anonymous names (Outer$1 -> Outer.AnonymousClass1), so neither derives
+          // the other; a key shared by distinct classes stays ambiguous below.
+          index.computeIfAbsent(fullName, ignored -> new ArrayList<>()).add(snapshot);
+          if (!rawName.equals(fullName))
+            index.computeIfAbsent(rawName, ignored -> new ArrayList<>()).add(snapshot);
         }
       }
       classes = Collections.unmodifiableMap(index);
@@ -522,7 +529,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "5", null, null, null),
+    Server server = new Server(new Implementation("rea-jadx-bridge", "6", null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);

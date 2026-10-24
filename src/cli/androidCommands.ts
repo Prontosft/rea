@@ -30,7 +30,11 @@ export const registerAndroidCommands = (
       ),
     );
   const path = z.string().describe("Local standalone APK path");
-  const className = z.string().describe("Exact fully qualified class name");
+  const className = z
+    .string()
+    .describe(
+      "Exact fully qualified class name, as displayed or as the DEX binary name (Outer$Inner)",
+    );
   cli.command(CLI_COMMANDS.inspectAndroidPackage, {
     description:
       "Inspect APK declarations and decoded manifest without executing it",

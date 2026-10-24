@@ -11,6 +11,7 @@ import {
 
 const summary = {
   full_name: "fixture.Target",
+  raw_name: "fixture.Target",
   name: "Target",
   method_count: 2,
   field_count: 0,
@@ -250,6 +251,48 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
     ],
   });
 });
+
+it.each([
+  { class_name: "fixture.Outer$1", accepted: true },
+  { class_name: "fixture.Outer.AnonymousClass1", accepted: true },
+  { class_name: "fixture.Outer.1", accepted: false },
+])(
+  "matches $class_name exactly against the displayed or DEX binary class identity",
+  async ({ class_name, accepted }) => {
+    const tools: JadxToolPort = {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
+      json: () =>
+        Promise.resolve({
+          ...summary,
+          full_name: "fixture.Outer.AnonymousClass1",
+          raw_name: "fixture.Outer$1",
+          name: "AnonymousClass1",
+        }),
+      text: () => Promise.reject(new Error("unexpected text call")),
+    };
+    const result = analyzeJadxRequest(
+      tools,
+      {
+        operation: "inspect_android_class",
+        input: androidInputSchemas.inspect_android_class.parse({
+          path: "/fixture.apk",
+          class_name,
+        }),
+      },
+      {} as never,
+      engine,
+    );
+    if (accepted)
+      await expect(result).resolves.toMatchObject({
+        class_name: "fixture.Outer.AnonymousClass1",
+      });
+    else
+      await expect(result).rejects.toMatchObject({
+        issues: [{ path: ["class_name"], reason: "invalid_value" }],
+      });
+  },
+);
 
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];

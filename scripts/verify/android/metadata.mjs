@@ -79,6 +79,10 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /BINARY_CLASS_NAME_REGRESSION_PASS inner=true anonymous=true absent=true/u,
+    );
+    assert.match(
+      result.stdout,
       /INITIALIZER_REGRESSION_PASS folded=2 bounded=true/u,
     );
     assert.match(
@@ -102,6 +106,9 @@ export const verifyAndroidMetadata = async ({
     );
     console.log(
       "PASS real Java filtered pages, nonzero inventory cursors and complete combined results",
+    );
+    console.log(
+      "PASS real displayed and DEX binary class names select one exact class",
     );
     console.log(
       "PASS real folded and mixed static initializers, absent bodies and bounded smali",

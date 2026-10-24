@@ -127,7 +127,11 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
 Every request includes `path`. Class/method operations use `class_name`,
-`method_name` and optional `overload_index` as applicable. For example:
+`method_name` and optional `overload_index` as applicable. `class_name` matches
+exactly either JADX's displayed name or the DEX binary name, so nested and
+anonymous classes accept `Outer$Inner` and `Outer$1`; results report the
+displayed name, such as `Outer.Inner` or `Outer.AnonymousClass1`. A name shared
+by distinct classes is refused as ambiguous. For example:
 
 ```json
 {

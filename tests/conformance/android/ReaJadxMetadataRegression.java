@@ -196,6 +196,34 @@ public class ReaJadxMetadataRegression {
     System.out.println("CLASS_SEARCH_REGRESSION_PASS pages=" + pages + " nonzero=true");
   }
 
+  private static void verifyBinaryClassNames(Method handle, Object bridge) throws Exception {
+    String[][] identities = {
+      { "io.appium.android.apis.app.FragmentArguments$MyFragment",
+        "io.appium.android.apis.app.FragmentArguments.MyFragment" },
+      { "io.appium.android.apis.app.AlertDialogSamples$1",
+        "io.appium.android.apis.app.AlertDialogSamples.AnonymousClass1" },
+    };
+    for (String[] identity : identities) {
+      JsonObject binary = call(handle, bridge, "get_class_summary", arguments(identity[0]));
+      require(binary.get("raw_name").getAsString().equals(identity[0])
+          && binary.get("full_name").getAsString().equals(identity[1]),
+          "Binary name did not select its exact class: " + identity[0]);
+      require(binary.equals(call(handle, bridge, "get_class_summary", arguments(identity[1]))),
+          "Displayed and binary names selected different summaries: " + identity[1]);
+    }
+    var input = (kotlinx.serialization.json.JsonObject)
+        kotlinx.serialization.json.Json.Default.parseToJsonElement(
+            arguments("io.appium.android.apis.app.FragmentArguments$1").toString());
+    boolean refused = false;
+    try { handle.invoke(bridge, "get_class_summary", input); }
+    catch (InvocationTargetException failure) {
+      refused = failure.getCause() instanceof IllegalArgumentException
+          && failure.getCause().getMessage().startsWith("Exact class not found");
+    }
+    require(refused, "An absent binary name resolved by suffix or nesting");
+    System.out.println("BINARY_CLASS_NAME_REGRESSION_PASS inner=true anonymous=true absent=true");
+  }
+
   private static Path initializerFixture(String sources, String output) throws Exception {
     Path directory = Path.of(output);
     SmaliOptions options = new SmaliOptions();
@@ -613,6 +641,7 @@ public class ReaJadxMetadataRegression {
       require(apiSummary.equals(call(handle, bridge, "get_class_summary", apiArgs)), "Unrelated frozen summary changed");
       System.out.println("METADATA_REGRESSION_PASS classes=" + states.size() + " overloads=" + signatures.size()
           + " reference_counts=" + referenceCounts);
+      verifyBinaryClassNames(handle, bridge);
       verifyInitializers(holder, config, constructor, handle, initializerFixture(args[1], args[2]));
       verifyDirectInvokes(holder, config, constructor, handle,
           Path.of(args[3]), Path.of(args[2]));
