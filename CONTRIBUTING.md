@@ -34,8 +34,6 @@ to locate provider and shared-workflow bottlenecks, preserve Evidence, and
 compare equivalent real tasks before claiming an improvement.
 
 When adding or changing an MCP tool, follow the [tool design guide](docs/tool-design.md) and preserve the canonical contracts and generated catalog.
-When adding or changing an admission ceiling, budget, or deadline, follow
-[admission limits and recovery](docs/design/limits-and-recovery.md).
 
 ## Reporting issues
 
@@ -248,6 +246,26 @@ running those workflows from source. The artifact build requires Linux,
 MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
 for the build and artifact-verification commands and the separate real Windows
 verification prerequisites. Keep the generated addon and manifest uncommitted.
+
+Without those two files, `npm run build:cached` itself refuses to start on
+Windows, because the build lock (`run-exclusive`) will not run a command whose
+descendants it cannot own. When the checkout's `package.json` version matches a
+published release, restore the files from that release's official npm tarball
+instead of building them. Verify the tarball digest against the registry before
+extracting:
+
+```bash
+npm view rea-agents@<version> dist.integrity
+npm pack rea-agents@<version>
+openssl dgst -sha512 -binary rea-agents-<version>.tgz | openssl base64 -A
+tar --force-local -xzf rea-agents-<version>.tgz package/native/windows/build/manifest.json package/native/windows/build/rea-windows-x64.node
+mkdir -p native/windows/build && cp package/native/windows/build/* native/windows/build/
+```
+
+The `openssl` output must equal the `dist.integrity` value after its `sha512-` prefix. The loader then checks the manifest's
+version, ABI, architecture, and artifact SHA-256 before granting authority. A
+checkout whose version differs from every published release still needs the
+Linux build lane.
 
 The general source suite (`npm run test:fast`, `npm run test:changed`, and
 `npm run test:local`) runs on Linux in CI, and Windows CI runs a curated lane.
