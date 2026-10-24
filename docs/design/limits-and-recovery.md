@@ -122,3 +122,13 @@ syntax, and the recovery sentence through `parseEnvironment` and `parseConfig`.
 [`regexMatchingDeadline.test.ts`](https://github.com/morluto/rea/blob/main/src/config/regexMatchingDeadline.test.ts)
 is the pattern. Project the failure and assert `configuration_invalid` for a
 bad value and the recovery wording for a hit.
+
+## Bun standalone module graphs
+
+`MAX_BUN_MODULE_COUNT` admits at most 100,000 module records.
+`MAX_BUN_RETAINED_BYTES` admits at most 256 MiB of serialized graph payload and
+separately bounds retained entry metadata. The shared artifact expansion budget
+also bounds the sum of referenced member lengths. Refusals name the boundary.
+There is no runtime override; additional host memory or `NODE_OPTIONS` does not
+raise these ceilings. Use a smaller producer fixture or a separately reviewed
+reader for larger graphs. No partial extraction is claimed on admission failure.

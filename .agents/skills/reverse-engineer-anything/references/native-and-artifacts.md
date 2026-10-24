@@ -568,3 +568,18 @@ page cannot prove absence in unknown coverage. Retained views are historical,
 not fresh filesystem checks. No decryption, Godot resource decoding, GDScript
 decompilation or target execution is provided. See
 [Godot PCK](https://github.com/morluto/rea/blob/main/docs/godot-pck.md).
+
+## Bun standalone executables
+
+A `bun build --compile` executable stores its module graph in Mach-O
+`__BUN,__bun`, a PE or ELF `.bun` section, or an appended trailer.
+`open_binary` then `inspect_artifact` reports root format `bun-standalone` with
+the carrier, structural layout, module count, entry point, raw flags and
+compile exec-argv; each module keeps its `/$bunfs/...` source name, loader,
+encoding, sizes and SHA-256, with sourcemap, bytecode and module-info regions as
+separate children. `extract-artifact` writes stored contents through the safe
+output tree; route extracted JavaScript to `analyze_javascript_application`.
+Layout labels describe record shapes, not a detected compiler version; unknown
+or ambiguous layouts are unsupported. Bytecode is retained, not decoded, and the
+executable is never run. See
+[Bun standalone executables](https://github.com/morluto/rea/blob/main/docs/bun-standalone.md).

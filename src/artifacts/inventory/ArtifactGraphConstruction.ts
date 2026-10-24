@@ -268,7 +268,14 @@ export const rootOccurrenceFor = (
   artifact_kind:
     metadata.format === "directory" ||
     isZipPackageFormat(metadata.format) ||
-    ["asar", "godot-pck", "dmg", "pkg", "pyinstaller"].includes(metadata.format)
+    [
+      "asar",
+      "godot-pck",
+      "dmg",
+      "pkg",
+      "pyinstaller",
+      "bun-standalone",
+    ].includes(metadata.format)
       ? "container"
       : artifactRoleForFormat(metadata.path, metadata.format).kind,
   artifact_format: metadata.format,

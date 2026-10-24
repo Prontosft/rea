@@ -85,6 +85,7 @@ const artifactFormatSchema = z.enum([
   "directory",
   "file",
   "pyinstaller",
+  "bun-standalone",
   "unknown",
 ]);
 

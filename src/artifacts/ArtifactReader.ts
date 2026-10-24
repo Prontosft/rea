@@ -175,6 +175,7 @@ export interface ArtifactReader {
     | "asar"
     | "godot-pck"
     | "pyinstaller"
+    | "bun-standalone"
     | "file";
   entries(
     signal?: AbortSignal,

@@ -1,3 +1,4 @@
+import { containsBunStandaloneArchive } from "../bun/BunModuleGraphLayout.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { sameRegularFileState } from "../../filesystem/RegularFile.js";
@@ -130,7 +131,8 @@ export const classifyAndHashRootForInventory = async (
       isZipPackageFormat(format) ||
       format === "mach-o-universal" ||
       format === "godot-pck" ||
-      format === "pyinstaller";
+      format === "pyinstaller" ||
+      format === "bun-standalone";
     outcome = {
       kind: "completed",
       value: {
@@ -221,6 +223,8 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
+    if (await containsBunStandaloneArchive(handle, archiveBytes, signal))
+      return "bun-standalone";
     const packaged = await containsPyInstallerArchive(
       handle,
       archiveBytes,

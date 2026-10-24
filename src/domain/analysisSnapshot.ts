@@ -92,6 +92,7 @@ const subjectFormatSchema = z.enum([
   "javascript-bundle",
   "entitlements",
   "pyinstaller",
+  "bun-standalone",
 ]);
 // Snapshot entries retain the same raw-only architecture boundary as targets.
 const subjectSchema = z.discriminatedUnion("format", [

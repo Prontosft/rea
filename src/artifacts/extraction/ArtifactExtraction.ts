@@ -1,3 +1,5 @@
+import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
+import { containsBunStandaloneArchive } from "../bun/BunModuleGraphLayout.js";
 import { resolveAsarHeaderAdmission } from "../AsarHeader.js";
 import { locateGodotPck } from "../GodotPckLocation.js";
 import { withArtifactRegularFile } from "../ArtifactFileOperation.js";
@@ -499,6 +501,8 @@ const requireExtractableFormat = async (
         if (format !== "elf" && format !== "pe" && format !== "mach-o")
           return false;
         abortIfNeeded(signal);
+        if (await containsBunStandaloneArchive(handle, size, signal))
+          return true;
         const packaged = await containsPyInstallerArchive(handle, size, signal);
         abortIfNeeded(signal);
         return packaged;
@@ -524,6 +528,8 @@ const createReader = async (
   signal?: AbortSignal,
 ): Promise<ArtifactReader> => {
   const format = input.inputFormat;
+  if (containerFormat === "bun-standalone")
+    return new BunStandaloneArtifactReader(path);
   if (containerFormat === "godot-pck") return new GodotPckArtifactReader(path);
   if (containerFormat === "pyinstaller")
     return new PyInstallerArtifactReader(path);

@@ -997,3 +997,8 @@ Counting retains the existing bounded formatted-string allocation after capacity
 admission; omit the flag to stream large JSON documents without materializing
 the complete formatted text. Exhausted token windows display an empty range at
 the total token count and have no next offset.
+
+Bun standalone executables use the existing `inspect-artifact` and
+`extract-artifact` commands to inventory and materialize embedded source,
+sourcemaps and bytecode without running the executable. See
+[Bun standalone executables](bun-standalone.md) for layout coverage and limits.

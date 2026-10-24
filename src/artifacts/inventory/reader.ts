@@ -1,3 +1,4 @@
+import { BunStandaloneArtifactReader } from "../BunStandaloneArtifactReader.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import type {
@@ -39,6 +40,8 @@ export const createReader = (
           ? {}
           : { headerAdmission: asarHeaderAdmission },
       );
+    case "bun-standalone":
+      return new BunStandaloneArtifactReader(path, rootSource);
     case "pyinstaller":
       return new PyInstallerArtifactReader(path, rootSource);
     case "godot-pck":
