@@ -1,3 +1,4 @@
+import { mzWindowsHeaderLayoutLimitation } from "../../domain/dosMz.js";
 import { readElfTableDeclarations } from "../../domain/elfDeclaredRanges.js";
 import {
   BinaryFormatFailure,
@@ -282,9 +283,15 @@ export function* readPeSectionDirectory(
   const dos = new BinaryReader(yield request(fileSize, 0n, 64n), true);
   if (dos.u16(0) !== 0x5a4d) reject("Missing DOS MZ header");
   const pe = dos.u32(60);
-  if (pe < 64) reject("PE signature overlaps the DOS header");
   const coff = new BinaryReader(yield request(fileSize, BigInt(pe), 24n), true);
   if (coff.u32(0) !== 0x4550) reject("PE signature is invalid");
+  const limitation = mzWindowsHeaderLayoutLimitation({
+    state: "declared",
+    offset: pe,
+    signature: "PE",
+  });
+  if (limitation !== undefined)
+    throw new BinaryFormatFailure("unsupported", limitation);
   const optionalSize = coff.u16(20);
   const optional = new BinaryReader(
     yield request(fileSize, BigInt(pe + 24), BigInt(optionalSize)),
