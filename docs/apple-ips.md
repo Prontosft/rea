@@ -38,6 +38,9 @@ address uses that row's own image base and offset. The recorded `inline` flag
 does not supply a missing offset or authorize borrowing another row's address.
 When `faultingThread` is missing or does not resolve to a recorded thread
 object, row-zero roles are `unknown`; the recorded lookup remains available.
+A translated process records Rosetta's registers in a nested
+`threadState.rosetta` object; each one is reported as `rosetta.<name>` and
+counts toward the register budget.
 `process.os_version` keeps the producer's dictionary (`train`, `build`,
 `release_type`, `is_embedded`) or the older string form. Image UUIDs are uppercase 8-4-4-4-12; an all-zero UUID
 or a missing `arch` is `uuid_unknown`. Image `source` letters keep their
