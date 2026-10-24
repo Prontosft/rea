@@ -2,12 +2,12 @@ import { promptArgumentsSchema } from "./promptArguments.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
 import type { RegisteredPrompt } from "@modelcontextprotocol/server";
-import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   PROMPT_CONTRACTS,
+  guidedPromptArgumentValues,
   renderGuidedPrompt,
   type PromptContract,
 } from "../contracts/promptContracts.js";
@@ -15,8 +15,6 @@ import {
   createPromptCompletionSource,
   type PromptCompletionSource,
 } from "./promptCompletion.js";
-
-const promptValuesSchema = z.record(z.string(), z.string());
 
 /** Live prompt registry whose updates emit MCP prompts/list_changed. */
 export interface GuidedPromptRegistry {
@@ -76,13 +74,7 @@ const registerPrompt = (
 };
 
 const promptResult = (contract: PromptContract, arguments_: unknown) => {
-  const values = promptValuesSchema.parse(arguments_);
-  for (const [name, argument] of Object.entries(contract.arguments))
-    if (
-      argument.required &&
-      (values[name] === undefined || values[name]?.trim().length === 0)
-    )
-      throw new TypeError(`Invalid arguments: ${name} must not be empty`);
+  const values = guidedPromptArgumentValues(contract, arguments_);
   return {
     description: contract.description,
     messages: [

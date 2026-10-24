@@ -27,6 +27,7 @@ import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApp
 import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
+import { guidedWorkflowsInputSchema } from "./promptContracts.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
@@ -61,6 +62,28 @@ const exportShapeComparisonOutputSchema = evidenceResultOf(
 const reconstructionObligationLedgerOutputSchema = evidenceResultOf(
   reconstructionObligationLedgerSchema,
 );
+const guidedWorkflowItemSchema = z.strictObject({
+  workflow_id: z.string(),
+  description: z.string(),
+  arguments: z.array(
+    z.strictObject({
+      name: z.string(),
+      description: z.string(),
+      required: z.boolean(),
+    }),
+  ),
+});
+const guidedWorkflowOutputSchema = z.discriminatedUnion("action", [
+  z.strictObject({
+    action: z.literal("list"),
+    workflows: z.array(guidedWorkflowItemSchema),
+  }),
+  z.strictObject({
+    action: z.literal("render"),
+    workflow_id: z.string(),
+    rendered_prompt: z.string(),
+  }),
+]);
 const HASH = "0".repeat(64);
 const retained = (evidence_id: string) => ({
   kind: "retained-evidence" as const,
@@ -69,6 +92,29 @@ const retained = (evidence_id: string) => ({
 
 /** Provider-neutral graph workflow contracts shared by MCP and CLI adapters. */
 export const APPLICATION_TOOL_CONTRACTS = [
+  {
+    name: "guided_workflows",
+    ...toolContractMetadata("guided_workflows"),
+    description:
+      "List or render REA's existing guided workflows. Rendering returns guidance only; it does not inspect targets, start analysis, or change session state.",
+    kind: "application",
+    inputSchema: guidedWorkflowsInputSchema,
+    outputSchema: guidedWorkflowOutputSchema,
+    examples: [
+      {
+        title: "List the available guided workflows",
+        input: { action: "list" },
+      },
+      {
+        title: "Render feature investigation guidance",
+        input: {
+          action: "render",
+          workflow_id: "investigate_feature",
+          arguments: { feature: "offline search" },
+        },
+      },
+    ],
+  },
   {
     name: "trace_application_feature",
     ...toolContractMetadata("trace_application_feature"),

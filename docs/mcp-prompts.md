@@ -4,6 +4,14 @@ REA exposes six provider-neutral investigation workflows through the MCP
 `prompts` capability. They complement the generated tool catalog; they do not add, remove, or
 invoke tools by themselves.
 
+Clients that expose tools but not prompts can use the target-free
+`guided_workflows` tool with `action: "list"` or `action: "render"`. CLI callers
+can use `rea guided-workflows` to list workflows, or pass `--action render`,
+`--workflow-id ID`, and `--arguments-json '{"feature":"offline search"}'` to
+render one. Both paths use the same contracts and renderer as native prompts;
+rendering returns guidance only and does not inspect a target, start analysis,
+or change session state.
+
 ## Prompt inventory
 
 | Prompt                            | Purpose                                                                              |

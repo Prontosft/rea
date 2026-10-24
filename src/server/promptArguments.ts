@@ -4,6 +4,7 @@ import type {
   PromptArgumentContract,
   PromptContract,
 } from "../contracts/promptContracts.js";
+import { guidedPromptArgumentSchema } from "../contracts/promptContracts.js";
 import type { PromptCompletionSource } from "./promptCompletion.js";
 
 export const promptArgumentsSchema = (
@@ -20,11 +21,10 @@ const argumentSchema = (
   argument: PromptArgumentContract,
   completion: PromptCompletionSource,
 ): z.ZodType => {
-  const value = z
-    .string()
-    .min(1)
-    .refine((value) => value.trim().length > 0)
-    .describe(argument.description);
+  const value = guidedPromptArgumentSchema({
+    ...argument,
+    required: true,
+  }).nonoptional();
   const kind = argument.completion;
   const completed =
     kind === undefined
