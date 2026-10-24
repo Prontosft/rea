@@ -386,6 +386,7 @@ export const safeElectronEnvironment = (
       "DISPLAY",
       "XAUTHORITY",
       "WAYLAND_DISPLAY",
+      "XAUTHORITY",
       ...(platform === "win32"
         ? [
             "SYSTEMROOT",
