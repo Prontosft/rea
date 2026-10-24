@@ -21,7 +21,9 @@ export const localPathStringSchema = nulFreeStringSchema.min(1);
 
 /** A caller-selected path that is absolute on the host running REA. */
 export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  process.platform === "win32" ? /^(?:[\\/]|[A-Za-z]:[\\/])/u : /^\//u,
+  // A literal slash in a character class is invalid in Unicode-set (`v`) mode.
+  // Hex spelling keeps the advertised schema portable without changing paths.
+  process.platform === "win32" ? /^(?:[\\\x2f]|[A-Za-z]:[\\\x2f])/u : /^\//u,
   "must be an absolute local filesystem path",
 );
 

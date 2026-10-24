@@ -105,6 +105,8 @@ describe("curated Windows test lane", () => {
     expect(await explicitPaths("windows")).toEqual(
       expect.arrayContaining([
         "src/contracts/sessionPathInputs.test.ts",
+        "src/domain/localPath.test.ts",
+        "tests/boundary/mcp/advertisedPatternsVMode.test.ts",
         "tests/boundary/filesystem/directAnalysisSnapshotReplay.test.ts",
         "tests/boundary/mcp/rawBinaryMcp.test.ts",
       ]),
