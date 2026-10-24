@@ -4,7 +4,10 @@ import {
   analysisViewResultSchema,
   type AnalysisViewResult,
 } from "../../domain/analysisView/analysisView.js";
-import { scenarioCaptureRecords } from "../../domain/analysisView/scenarioCaptureRecords.js";
+import {
+  scenarioCaptureRecords,
+  type ScenarioRecordPurpose,
+} from "../../domain/analysisView/scenarioCaptureRecords.js";
 import {
   readRecordedResponseBody,
   type RecordedResponseBody,
@@ -273,7 +276,7 @@ const parseScenarioCapture = (
   operation: string,
   normalized: unknown,
   parameters: unknown,
-  purpose: "manifest" | "replay",
+  purpose: ScenarioRecordPurpose,
 ): Result<CaptureFacts, AnalysisError> => {
   const scenario = retainedBrowserScenarioCaptureSchema.safeParse(normalized);
   if (!scenario.success)
@@ -354,12 +357,12 @@ const parseHarCapture = (
  * Authenticate the evidence file and require complete capture Evidence of
  * either kind. Only an operation no capture schema owns blames the operation;
  * a recognized operation's payload failures name the payload fields. A browser
- * capture's request bodies are kept only for the manifest purpose.
+ * capture's records keep what the purpose selects; a HAR's keep everything.
  */
 export const parseCaptureEvidence = (
   operation: string,
   value: unknown,
-  purpose: "manifest" | "replay" = "replay",
+  purpose: ScenarioRecordPurpose = "replay",
 ): Result<CaptureFacts & { readonly evidenceId: string }, AnalysisError> => {
   const evidence = parseEvidenceFile(operation, "evidence", value);
   if (!evidence.ok) return evidence;
