@@ -2,6 +2,8 @@ import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   createAmbientPathResolver,
+  createSemanticAmbientModificationQuery,
+  semanticAmbientCallKeepsReceiver,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
@@ -57,6 +59,7 @@ import {
 } from "./javascriptSemanticIterationSources.js";
 import { semanticGetterReceiverReferences } from "./javascriptSemanticGetterResults.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
+import { semanticNativePromiseProducer } from "./javascriptSemanticPromiseIdentity.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import {
   semanticMutationInitializers,
@@ -476,6 +479,11 @@ export function* collectSemanticMemberMutationsSteps(
     return effects;
   };
   const parents = state.parentsByNode;
+  const literalEffects: NonNullable<
+    JavaScriptSemanticAnalysisState["literalMemberEffects"]
+  > = new WeakMap();
+  state.literalMemberEffects = literalEffects;
+  const recordedLiteralEffects = new WeakMap<t.Node, Set<string>>();
   const observablePaths = observableMutationPaths(state);
   const recordedRequiredEffects = new Set<string>();
   let recordedEffectCount = 0;
@@ -522,7 +530,7 @@ export function* collectSemanticMemberMutationsSteps(
   };
   // Ambient indexing owns aliases of global objects. Consume its canonical
   // writes instead of reparsing qualified or aliased process assignments.
-  for (const { path, node } of state.ambientWriteEffects)
+  for (const { path, node, kind } of state.ambientReferenceEffects)
     if (
       path[0] === "global" &&
       path[1] === "process" &&
@@ -530,7 +538,7 @@ export function* collectSemanticMemberMutationsSteps(
       node !== undefined &&
       semanticOriginalGlobalProcessAt(node, state)
     )
-      recordRequiredEffect("node:process", path.slice(2), "write", node);
+      recordRequiredEffect("node:process", path.slice(2), kind, node);
   const selections = new Map<string, readonly string[]>();
   const coveringPaths = new Map<string, SemanticPropertyPathCoverage>();
   state.arrayIterationUnknown = false;
@@ -649,6 +657,7 @@ export function* collectSemanticMemberMutationsSteps(
     iterableReferences.push(reference);
   };
   const ambientPaths = createAmbientPathResolver(state, true);
+  const ambientReads = createAmbientPathResolver(state, false);
   const markValue = (
     node: t.Node,
     path: PropertyPath,
@@ -864,6 +873,12 @@ export function* collectSemanticMemberMutationsSteps(
             state.arrayIterationUnknown = true;
           continue;
         }
+        const normalizedPath = observablePaths.normalize(
+          binding.bindingId,
+          current.path,
+          effect,
+        );
+        if (normalizedPath === null) continue;
         // An alias restored from a saved reference can revisit the same binding
         // at an earlier capture or a shorter getter-receiver path. Only a
         // repeated capture and path closes a cycle.
@@ -884,7 +899,7 @@ export function* collectSemanticMemberMutationsSteps(
           current.memberReadAt?.start,
           current.memberReadAt?.end,
         ]);
-        const lifetime = lifetimeKey(captureKey, current.path);
+        const lifetime = lifetimeKey(captureKey, normalizedPath);
         if (current.bindings.has(lifetime)) continue;
         // A self alias such as `node = node[key]` revisits its capture with the
         // same prefix added on every cycle, so exact paths never repeat. When
@@ -895,12 +910,12 @@ export function* collectSemanticMemberMutationsSteps(
         let repeatedPrefix: PropertyPath | undefined;
         for (
           let start = 1;
-          revisited && start <= current.path.length;
+          revisited && start <= normalizedPath.length;
           start++
         ) {
-          const suffix = current.path.slice(start);
+          const suffix = normalizedPath.slice(start);
           if (!current.bindings.has(lifetimeKey(captureKey, suffix))) continue;
-          repeatedPrefix = current.path.slice(0, start);
+          repeatedPrefix = normalizedPath.slice(0, start);
           break;
         }
         if (
@@ -926,12 +941,7 @@ export function* collectSemanticMemberMutationsSteps(
         // combination of exclusions through branch diamonds is exponential.
         // Preserve paths that can change observed slots or Array prototype
         // effects; canonicalize suffixes that cannot distinguish lattice facts.
-        let path = observablePaths.normalize(
-          binding.bindingId,
-          current.path,
-          effect,
-        );
-        if (path === null) continue;
+        let path = normalizedPath;
         const selectorIndex = path.findIndex(
           (key) => key !== null && typeof key === "object",
         );
@@ -1212,6 +1222,31 @@ export function* collectSemanticMemberMutationsSteps(
           ]),
         });
       } else {
+        if (
+          t.isObjectExpression(expression) ||
+          t.isArrayExpression(expression) ||
+          t.isFunction(expression) ||
+          t.isClass(expression)
+        ) {
+          // A literal may escape through an assignment result before another
+          // binding projects it. Retain effects on the allocation itself,
+          // including writes that stop at an owned slot rather than its value.
+          const identity = JSON.stringify([
+            effect,
+            current.path,
+            mutation?.start,
+            mutation?.end,
+          ]);
+          const recorded = recordedLiteralEffects.get(expression) ?? new Set();
+          if (!recorded.has(identity)) {
+            recorded.add(identity);
+            recordedLiteralEffects.set(expression, recorded);
+            const effects = literalEffects.get(expression) ?? [];
+            effects.push({ kind: effect, path: current.path, node: mutation });
+            literalEffects.set(expression, effects);
+            recordedEffectCount += 1;
+          }
+        }
         const references =
           effect === "escape"
             ? escapedReferenceLeaves(
@@ -1433,6 +1468,21 @@ export function* collectSemanticMemberMutationsSteps(
   }
   const markReceiver = (callee: t.Node, mutation: t.Node): void => {
     const expression = unwrapJavaScriptExpression(callee).node;
+    if (t.isCallExpression(mutation) || t.isOptionalCallExpression(mutation)) {
+      const resolved = ambientReads(expression);
+      const [path] = resolved.paths;
+      // Match the syntax ambient owner: proven Object/Reflect intrinsics and
+      // browser entry points do not expose their receiver to application code.
+      // Writes or earlier escapes still make an overwritten method opaque.
+      if (
+        resolved.ownership === "ambient" &&
+        path?.[0] === "global" &&
+        path.every((key): key is string => key !== null) &&
+        semanticAmbientCallKeepsReceiver(path) &&
+        !createSemanticAmbientModificationQuery(state, expression)(path)
+      )
+        return;
+    }
     if (
       (t.isCallExpression(mutation) || t.isOptionalCallExpression(mutation)) &&
       (t.isMemberExpression(expression) ||
@@ -2060,8 +2110,9 @@ const observableMutationPaths = (
         )
           (observer.origins ??= new Set()).add("typed-array");
         else if (
-          t.isNewExpression(expression) &&
-          semanticClassCandidates(expression.callee, state).length === 0
+          semanticNativePromiseProducer(expression, state) ||
+          (t.isNewExpression(expression) &&
+            semanticClassCandidates(expression.callee, state).length === 0)
         )
           (observer.origins ??= new Set()).add("opaque");
         else if (
@@ -2159,9 +2210,12 @@ const observableMutationPaths = (
                 add(origin);
               else if (origin === "ambient")
                 add(
-                  semanticPropertyPathKeyMatches(key, "Array")
-                    ? "array"
-                    : "opaque",
+                  typeof key === "string" &&
+                    ["globalThis", "global", "window", "self"].includes(key)
+                    ? "ambient"
+                    : semanticPropertyPathKeyMatches(key, "Array")
+                      ? "array"
+                      : "opaque",
                 );
               else if (
                 origin === "array" &&
@@ -2217,15 +2271,27 @@ const observableMutationPaths = (
     }
     if ((observer.origins?.size ?? 0) === 0)
       return path.length === 0 ? path : [null];
+    const normalized: PropertyPath[number][] = [];
     for (let offset = 0; offset < path.length; offset++) {
       const key = path[offset];
       if (key === undefined) break;
+      // Known global self properties select the same receiver. Canonicalize
+      // them before alias-cycle widening; unrelated writes are not escapes.
+      if (
+        !(
+          observer.origins?.size === 1 &&
+          observer.origins.has("ambient") &&
+          typeof key === "string" &&
+          ["globalThis", "global", "window", "self"].includes(key)
+        )
+      )
+        normalized.push(key);
       observer = project(observer, [key]);
       settle();
       if ((observer.origins?.size ?? 0) === 0 && offset + 1 < path.length)
-        return [...path.slice(0, offset + 1), null];
+        return [...normalized, null];
     }
-    return path;
+    return normalized;
   };
   // A projection's origins depend only on its source origins and key. Once
   // repeating a prefix revisits an origin set, every longer repetition stays
