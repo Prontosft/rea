@@ -1919,6 +1919,7 @@ type MutationObservableOrigin =
   | "typed-array"
   | "typed-array-element"
   | "function"
+  | "unobserved"
   | "opaque";
 
 interface MutationObserverNode {
@@ -2008,18 +2009,18 @@ const observableMutationPaths = (
   for (const binding of state.bindingsById.values()) {
     const observer = bindingNodes.get(binding.bindingId);
     if (observer === undefined) continue;
-    // Parameters, caught values and imports can have observable member slots
-    // without a local object-allocation node (for example a
-    // CommonJS namespace from `require("node:fs")`). Keep those writes at their
-    // exact member paths instead of widening the first path to a wildcard.
+    // Parameters and caught values need exact write paths, but do not establish
+    // distinct child identities for escape-path traversal.
+    if (binding.kind === "parameter" || binding.kind === "catch")
+      (observer.origins ??= new Set()).add("unobserved");
+    // Imported and host identities can have observable member slots without a
+    // local allocation, including CommonJS namespaces. Preserve those escapes.
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
         semanticRequireOrigin(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (
-      binding.kind === "parameter" ||
-      binding.kind === "catch" ||
       binding.directOrigins.length > 0 ||
       hasParsedRequireOrigin ||
       binding.hostOrigin !== undefined
@@ -2142,9 +2143,11 @@ const observableMutationPaths = (
           // that the mutation collector's selection union already prevents.
           for (const origin of source.origins ?? [])
             add(
-              origin === "typed-array" && numericIndex
-                ? "typed-array-element"
-                : "opaque",
+              origin === "unobserved"
+                ? "unobserved"
+                : origin === "typed-array" && numericIndex
+                  ? "typed-array-element"
+                  : "opaque",
             );
         } else
           for (const origin of source.origins ?? []) {
@@ -2157,7 +2160,11 @@ const observableMutationPaths = (
                 // Number/BigInt property reads can expose constructors, methods
                 // or objects returned by prototype getters after boxing.
                 add("opaque");
-              } else if (origin === "array-prototype" || origin === "opaque")
+              } else if (
+                origin === "array-prototype" ||
+                origin === "opaque" ||
+                origin === "unobserved"
+              )
                 add(origin);
               else if (origin === "ambient")
                 add(
@@ -2213,8 +2220,15 @@ const observableMutationPaths = (
       const origins = observer.origins;
       return origins === undefined ||
         origins.size === 0 ||
-        (origins.size === 1 && origins.has("typed-array-element"))
-        ? null
+        [...origins].every(
+          (origin) =>
+            origin === "typed-array-element" || origin === "unobserved",
+        )
+        ? // Preserve an unknown container's escape (including coercion effects)
+          // at its owner instead of enumerating indistinguishable child paths.
+          origins?.has("unobserved")
+          ? []
+          : null
         : path;
     }
     if ((observer.origins?.size ?? 0) === 0)
