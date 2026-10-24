@@ -1,3 +1,4 @@
+import { compatibleToolInputSchema } from "./inputKeyAliases.js";
 import { z } from "zod";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
@@ -12,17 +13,19 @@ const enhanced = <Name extends string, Schema extends z.ZodObject>(
   name: Name,
   description: string,
   inputSchema: Schema,
-) =>
-  ({
+) => {
+  const acceptedInputSchema = compatibleToolInputSchema(inputSchema);
+  return {
     name,
     ...toolContractMetadata(name),
     description,
     kind: "enhanced",
     requiresActiveTarget: true,
-    inputSchema,
+    inputSchema: acceptedInputSchema,
     outputSchema: requireOutputSchema(enhancedOutputSchemas, name),
-    examples: examplesFor(name, inputSchema),
-  }) satisfies ToolContract<Name, Schema>;
+    examples: examplesFor(name, acceptedInputSchema),
+  } satisfies ToolContract<Name, typeof acceptedInputSchema>;
+};
 
 /** Workflow tools composed from one or more provider operations. */
 export const ENHANCED_TOOL_CONTRACTS = [

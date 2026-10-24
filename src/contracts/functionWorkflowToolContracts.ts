@@ -1,3 +1,4 @@
+import { compatibleToolInputSchema } from "./inputKeyAliases.js";
 import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { analysisDetailSummaryDefaultSchema } from "./analysisDetail.js";
 import { enhancedInputSchemas } from "./enhancedInputs.js";
@@ -25,7 +26,9 @@ const functionWorkflow = <Name extends FunctionWorkflowName>(
   name: Name,
   description: string,
 ) => {
-  const inputSchema = functionWorkflowInputSchemas[name];
+  const inputSchema = compatibleToolInputSchema(
+    functionWorkflowInputSchemas[name],
+  );
   const outputSchema = requireOutputSchema(enhancedOutputSchemas, name);
   return {
     name,
