@@ -82,7 +82,7 @@ it.each([
   "dwarf",
   "disassemble_all",
 ])(
-  "rejects symbol selection for %s before reading or launching",
+  "rejects and names symbol selection for %s before reading or launching",
   async (operation) => {
     const digest = vi.fn();
     const run = vi.fn();
@@ -94,7 +94,10 @@ it.each([
     });
     expect(result).toMatchObject({
       ok: false,
-      error: { _tag: "AnalysisInputError" },
+      error: {
+        _tag: "AnalysisInputError",
+        issues: [{ path: ["symbol"], reason: "unknown_argument" }],
+      },
     });
     if (result.ok) throw new Error("Expected selector rejection");
     expect(projectAnalysisError(result.error)).toMatchObject({
