@@ -24,7 +24,11 @@ export async function applyReleasePleasePatch(
       "The release proposal patch requires release-please 17.3.0",
     );
   }
-  const args = ["--directory", relative(project, directory), patch];
+  const args = [
+    "--directory",
+    relative(project, directory).replaceAll("\\", "/"),
+    patch,
+  ];
   const check = async (reverse) => {
     try {
       await execute(

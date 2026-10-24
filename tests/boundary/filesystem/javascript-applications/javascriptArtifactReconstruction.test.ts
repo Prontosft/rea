@@ -19,6 +19,7 @@ import {
 } from "../../../support/javascriptApplicationScope.js";
 import {
   analyzeJavaScriptArtifactFiles,
+  analyzeAndProjectJavaScriptArtifactFiles,
   analyzeAndAdoptJavaScriptArtifactFiles,
 } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
@@ -558,7 +559,76 @@ it("reports file progress and honors cancellation before the next source", async
   expect(progress[0]).not.toBe(progress[1]);
 });
 
-it("preserves graph commitments and export shapes through worker adoption", async () => {
+it("preserves cancellation reason when cancelled before an invalid-utf8 source", async () => {
+  const root = await fixtureDirectory();
+  await writeFile(join(root, "z-invalid.js"), Buffer.from([0xff, 0xfe, 0xff]));
+  const controller = new AbortController();
+  const reason = { request: "cancel before invalid utf8 source" };
+  const failure = await reconstructJavaScriptArtifact(
+    { input_path: root },
+    controller.signal,
+    {
+      report: async (event) => {
+        if (event.phase === "parse_javascript_source") {
+          controller.abort(reason);
+        }
+      },
+    },
+  ).then(
+    () => {
+      throw new Error("Expected cancellation");
+    },
+    (cause: unknown) => cause,
+  );
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      partial_observation: { operation: "analyze_javascript_application" },
+    },
+  });
+});
+
+it("invokes progress and honors progress-driven cancellation on an invalid-only input", async () => {
+  const root = await createTestTempDirectory("rea-javascript-invalid-only-");
+  await writeFile(join(root, "bad.js"), Buffer.from([0xff, 0xfe, 0xff]));
+  const controller = new AbortController();
+  const reason = { request: "cancel on invalid-only progress" };
+  const progress: string[] = [];
+  const failure = await reconstructJavaScriptArtifact(
+    { input_path: root },
+    controller.signal,
+    {
+      report: async (event) => {
+        if (event.phase === "parse_javascript_source") {
+          progress.push(event.message);
+          controller.abort(reason);
+        }
+      },
+    },
+  ).then(
+    () => {
+      throw new Error("Expected cancellation");
+    },
+    (cause: unknown) => cause,
+  );
+  if (!(failure instanceof AnalysisError)) throw failure;
+  expect(failure.cause).toBe(reason);
+  expect(progress).toHaveLength(1);
+  expect(progress[0]).toContain("bad.js");
+  expect(progress[0]).toContain("(1/1)");
+  expect(projectAnalysisError(failure)).toMatchObject({
+    code: "cancelled",
+    category: "cancelled",
+    details: {
+      partial_observation: { operation: "analyze_javascript_application" },
+    },
+  });
+});
+
+it("preserves graph commitments and export shapes when consuming file-local IR", async () => {
   const root = await fixtureDirectory();
   await writeFile(
     join(root, "exports.mjs"),
@@ -693,6 +763,64 @@ it("preserves graph commitments and export shapes through worker adoption", asyn
     );
     expect(resealed).toEqual(semantic);
     expect(isValidatedImmutableJavaScriptSemanticGraph(resealed)).toBe(true);
+  } finally {
+    await reader.close();
+  }
+});
+
+it("preserves unavailable JavaScript sources identically between compact and full projection paths", async () => {
+  const root = await fixtureDirectory();
+  await writeFile(join(root, "valid.js"), "export const a = 1;\n");
+  await writeFile(
+    join(root, "invalid.js"),
+    Buffer.from([0xef, 0xbb, 0xbf, 0xff]),
+  );
+  await writeFile(join(root, "unparseable.js"), "const = ;\n");
+  await writeFile(
+    join(root, "electron.js"),
+    'const e = require("electron"); e.ipcMain.on("test:copy", (event) => { event.sender.copy(); });\n',
+  );
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const full = analyzeJavaScriptArtifactFiles(files);
+    const projection = createJavaScriptSemanticGraphProjection();
+    const compact = await analyzeAndProjectJavaScriptArtifactFiles(
+      files,
+      projection.projectFile,
+    );
+    const graph = buildJavaScriptArtifactGraph(snapshot, files, full);
+    expect(buildJavaScriptArtifactGraph(snapshot, files, compact)).toEqual(
+      graph,
+    );
+    const semantic = projection.finish(snapshot.manifest.root_sha256, graph);
+    expect(semantic).toEqual(
+      buildJavaScriptSemanticGraph({
+        rootArtifactSha256: snapshot.manifest.root_sha256,
+        applicationGraph: graph,
+        analysis: full,
+      }),
+    );
+    expect(
+      semantic.nodes.some(
+        ({ kind, identity }) =>
+          kind === "module" && identity.module_path === "invalid.js",
+      ),
+    ).toBe(true);
+    expect(
+      semantic.nodes.some(
+        ({ kind, identity }) =>
+          kind === "module" && identity.module_path === "unparseable.js",
+      ),
+    ).toBe(true);
+    expect(
+      semantic.nodes.some(
+        ({ properties }) =>
+          typeof properties.path_id === "string" &&
+          properties.terminal === "ipc-event.sender.copy",
+      ),
+    ).toBe(true);
   } finally {
     await reader.close();
   }

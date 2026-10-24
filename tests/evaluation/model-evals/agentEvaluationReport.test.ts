@@ -43,9 +43,28 @@ describe("agent evaluation release gate", () => {
 async function runnerFailurePredicate(): Promise<(item: unknown) => unknown> {
   const source = await readFile("scripts/verify-agent-experience.mjs", "utf8");
   const program = parse(source, { sourceType: "module" }).program;
-  for (const top of program.body) {
-    if (top.type !== "TryStatement") continue;
-    for (const statement of top.block.body) {
+  const blocks = program.body.flatMap((top) => {
+    if (top.type === "TryStatement") return [top.block.body];
+    if (
+      top.type === "ExpressionStatement" &&
+      top.expression.type === "AwaitExpression" &&
+      top.expression.argument.type === "CallExpression"
+    ) {
+      const nested: (typeof program.body)[] = [];
+      for (const argument of top.expression.argument.arguments) {
+        if (
+          (argument.type === "ArrowFunctionExpression" ||
+            argument.type === "FunctionExpression") &&
+          argument.body.type === "BlockStatement"
+        )
+          nested.push(argument.body.body);
+      }
+      return nested;
+    }
+    return [];
+  });
+  for (const block of blocks) {
+    for (const statement of block) {
       if (statement.type !== "VariableDeclaration") continue;
       for (const declaration of statement.declarations) {
         if (

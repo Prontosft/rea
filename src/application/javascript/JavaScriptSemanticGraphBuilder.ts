@@ -192,11 +192,13 @@ export interface JavaScriptSemanticGraphProjection {
     limits: Readonly<Record<string, JsonValue>> | null,
     unknownReason: "resource-limit" | "incomplete-module",
   ) => void;
-  readonly projectFile: (
+  readonly projectFile: ((
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
     paths?: readonly ElectronCallPath[],
-  ) => void;
+  ) => void) & {
+    readonly recordUnavailableFile?: JavaScriptSemanticGraphProjection["recordUnavailableFile"];
+  };
   /** Project one file in steps between its projection passes. */
   readonly projectFileSteps: (
     file: JavaScriptArtifactFile,
@@ -443,6 +445,85 @@ export const createJavaScriptSemanticGraphProjection = (
     fingerprints.length = 0;
     return graph;
   };
+  const recordUnavailableFile = (
+    file: JavaScriptArtifactFile,
+    reason: string,
+    limits: Readonly<Record<string, JsonValue>> | null,
+    unknownReason: "resource-limit" | "incomplete-module",
+  ): void => {
+    // Both full and incremental construction enter here. Metadata/native
+    // processing gaps belong to the application graph, never JavaScript IR.
+    if (file.kind !== "javascript") return;
+    const retainedLimits = javaScriptAnalysisCoverageLimits(limits);
+    for (const limit of retainedLimits) {
+      executionLimits.set(
+        JSON.stringify([limit.name, limit.value, limit.unit]),
+        limit,
+      );
+    }
+    const remainingTreeBudget = nodeCeiling - state.nodes.size;
+    state.fileNodeBudget = Math.min(
+      fileNodeCeiling,
+      Math.max(0, remainingTreeBudget),
+    );
+    state.fileNodesDropped = false;
+    const module = retainNode(state, file, {
+      kind: "module",
+      roleKey: "module",
+      location: null,
+      label: file.path,
+      functionNodeId: null,
+    });
+    if (state.fileNodesDropped) {
+      truncatedFiles += 1;
+      noteSemanticCeilingReached(
+        nodeCeilingsReached,
+        remainingTreeBudget,
+        fileNodeCeiling,
+      );
+    }
+    state.fileNodeBudget = null;
+    if (module !== null) state.roots.add(module.node_id);
+    const evidence = {
+      ...observedSemanticEvidence(file, null),
+      authority: "unknown" as const,
+      state: "unknown" as const,
+      confidence: "unknown" as const,
+      coverage: partialApplicationCoverage(retainedLimits, null),
+      limitations: [reason],
+    };
+    const unknownsBefore = state.unknowns.size;
+    const omissionsBefore = semanticUnknownOccurrences(state.unknownOmissions);
+    state.unknownCapacity = Math.min(
+      unknownCeiling,
+      unknownsBefore + fileUnknownCeiling,
+    );
+    for (const family of JAVASCRIPT_SEMANTIC_RELATION_FAMILIES) {
+      addSemanticGraphUnknown(state, {
+        node_id: module?.node_id ?? null,
+        family,
+        relation_kinds: JAVASCRIPT_SEMANTIC_RELATIONS.filter(
+          (relation) =>
+            JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation] === family,
+        ),
+        reason: unknownReason,
+        detail: reason,
+        candidate_node_ids: [],
+        evidence,
+      });
+    }
+    state.unknownCapacity = null;
+    if (semanticUnknownOccurrences(state.unknownOmissions) > omissionsBefore) {
+      noteSemanticCeilingReached(
+        unknownCeilingsReached,
+        unknownCeiling - unknownsBefore,
+        fileUnknownCeiling,
+      );
+    }
+    unavailableFiles += 1;
+    if (unknownReason === "resource-limit" && retainedLimits.length > 0)
+      resourceTruncatedFiles += 1;
+  };
   return {
     remainingFileCapacity: () => ({
       nodes: Math.min(
@@ -505,75 +586,20 @@ export const createJavaScriptSemanticGraphProjection = (
           fileUnknownCeiling,
         );
     },
-    recordUnavailableFile: (file, reason, limits, unknownReason) => {
-      // Both full and incremental construction enter here. Metadata/native
-      // processing gaps belong to the application graph, never JavaScript IR.
-      if (file.kind !== "javascript") return;
-      const retainedLimits = javaScriptAnalysisCoverageLimits(limits);
-      for (const limit of retainedLimits) {
-        executionLimits.set(
-          JSON.stringify([limit.name, limit.value, limit.unit]),
-          limit,
-        );
-      }
-      state.fileNodeBudget = Math.min(
-        fileNodeCeiling,
-        Math.max(0, nodeCeiling - state.nodes.size),
-      );
-      const module = retainNode(state, file, {
-        kind: "module",
-        roleKey: "module",
-        location: null,
-        label: file.path,
-        functionNodeId: null,
-      });
-      state.fileNodeBudget = null;
-      if (module !== null) state.roots.add(module.node_id);
-      const evidence = {
-        ...observedSemanticEvidence(file, null),
-        authority: "unknown" as const,
-        state: "unknown" as const,
-        confidence: "unknown" as const,
-        coverage: partialApplicationCoverage(retainedLimits, null),
-        limitations: [reason],
-      };
-      const unknownsBefore = state.unknowns.size;
-      const omissionsBefore = semanticUnknownOccurrences(
-        state.unknownOmissions,
-      );
-      state.unknownCapacity = Math.min(
-        unknownCeiling,
-        unknownsBefore + fileUnknownCeiling,
-      );
-      for (const family of JAVASCRIPT_SEMANTIC_RELATION_FAMILIES) {
-        addSemanticGraphUnknown(state, {
-          node_id: module?.node_id ?? null,
-          family,
-          relation_kinds: JAVASCRIPT_SEMANTIC_RELATIONS.filter(
-            (relation) =>
-              JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation] === family,
-          ),
-          reason: unknownReason,
-          detail: reason,
-          candidate_node_ids: [],
-          evidence,
-        });
-      }
-      state.unknownCapacity = null;
-      if (semanticUnknownOccurrences(state.unknownOmissions) > omissionsBefore)
-        noteSemanticCeilingReached(
-          unknownCeilingsReached,
-          unknownCeiling - unknownsBefore,
-          fileUnknownCeiling,
-        );
-      unavailableFiles += 1;
-      if (unknownReason === "resource-limit" && retainedLimits.length > 0)
-        resourceTruncatedFiles += 1;
-    },
-    projectFile: (file, ir, paths) => {
-      const steps = projectSourceSteps(file, ir, paths);
-      while (steps.next().done !== true);
-    },
+    recordUnavailableFile,
+    projectFile: Object.assign(
+      (
+        file: JavaScriptArtifactFile,
+        ir: JavaScriptSemanticIr,
+        paths: readonly ElectronCallPath[] = [],
+      ) => {
+        const steps = projectSourceSteps(file, ir, paths);
+        while (steps.next().done !== true);
+      },
+      {
+        recordUnavailableFile,
+      },
+    ),
     projectFileSteps: projectSourceSteps,
     finish: (rootArtifactSha256, applicationGraph) =>
       finishWith(

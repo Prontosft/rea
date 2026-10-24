@@ -20,12 +20,11 @@ import {
 } from "../../domain/sourceMapEnvelope.js";
 import type { SourceMapLeaf } from "../../domain/sourceMapEnvelope.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
+import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { failedJavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
-import type {
-  JavaScriptArtifactFile,
-  JavaScriptArtifactFileSet,
-} from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
+  type JavaScriptArtifactFile,
+  type JavaScriptArtifactFileSet,
   javaScriptArtifactTextExclusion,
   javaScriptSemanticSourceExclusion,
 } from "../../domain/javascript/javascriptArtifactFiles.js";
@@ -85,6 +84,7 @@ interface ArtifactAnalysisContext<
   readonly projectSemantics: (
     file: JavaScriptArtifactFile,
     ir: JavaScriptSemanticIr,
+    paths?: readonly ElectronCallPath[],
   ) => Generator<void, SemanticIr>;
 }
 
@@ -97,6 +97,88 @@ export const analyzeJavaScriptArtifactFiles = (
     yield;
     return ir;
   });
+
+/**
+ * Project each file's full IR immediately, retaining only later module facts.
+ * Parsing, analysis and each projection pass run as separate steps, so control
+ * messages and cancellation are handled within one large file as well.
+ */
+export const analyzeAndProjectJavaScriptArtifactFiles = async (
+  fileSet: JavaScriptArtifactFileSet,
+  projectSemantics:
+    | ((
+        file: JavaScriptArtifactFile,
+        ir: JavaScriptSemanticIr,
+        paths?: readonly ElectronCallPath[],
+      ) => Iterator<void, void> | void)
+    | Pick<
+        JavaScriptSemanticGraphProjection,
+        "projectFile" | "recordUnavailableFile"
+      >,
+  beforeFile?: (
+    file: JavaScriptArtifactFile,
+    completed: number,
+    total: number,
+  ) => Promise<void>,
+  signal?: AbortSignal,
+): Promise<JavaScriptModuleArtifactAnalysis> => {
+  const state = emptyArtifactAnalysis<JavaScriptModuleSemanticIr>();
+  const projectFn =
+    typeof projectSemantics === "function"
+      ? projectSemantics
+      : projectSemantics.projectFile.bind(projectSemantics);
+  const recordUnavailable =
+    typeof projectSemantics === "function"
+      ? "recordUnavailableFile" in projectSemantics &&
+        typeof projectSemantics.recordUnavailableFile === "function"
+        ? (projectSemantics.recordUnavailableFile as JavaScriptSemanticGraphProjection["recordUnavailableFile"])
+        : undefined
+      : projectSemantics.recordUnavailableFile.bind(projectSemantics);
+  const projectFileSemantics = function* (
+    file: JavaScriptArtifactFile,
+    ir: JavaScriptSemanticIr,
+    paths?: readonly ElectronCallPath[],
+  ): Generator<void, JavaScriptModuleSemanticIr> {
+    const projection = projectFn(file, ir, paths);
+    if (projection !== undefined) while (projection.next().done !== true) yield;
+    return projectJavaScriptModuleSemantics(ir);
+  };
+  const context = { state, projectSemantics: projectFileSemantics };
+  for (const [index, file] of fileSet.files.entries()) {
+    // Let progress, cancellation and garbage collection run between files.
+    await setImmediate();
+    await beforeFile?.(file, index, fileSet.files.length);
+    await completeJavaScriptAnalysisSteps(
+      analyzeArtifactFileSteps(file, context),
+      signal,
+    );
+    const analyzed = state.files[state.files.length - 1];
+    const reason = javaScriptSemanticSourceExclusion(
+      file,
+      analyzed?.javascript?.parse_status ?? null,
+    );
+    if (reason !== null)
+      recordUnavailable?.(file, reason, null, "incomplete-module");
+  }
+  return finalizeArtifactAnalysis(state);
+};
+
+const isSignalAborted = (signal?: AbortSignal): boolean =>
+  signal?.aborted === true;
+
+const translateAnalysisInterruption = (
+  cause: unknown,
+  signal?: AbortSignal,
+): AnalysisError => {
+  if (cause instanceof AnalysisError) return cause;
+  if (cause instanceof ArtifactReaderFailure && cause.reason === "cancelled")
+    return translateArtifactFailure("analyze_javascript_application", cause);
+  if (signal?.aborted === true && cause === signal.reason)
+    return new AnalysisCancelledError("analyze_javascript_application", {
+      cause,
+    });
+  throw cause;
+};
 
 /** Analyze sources behind a hard heap boundary, retaining collected facts on interruption. */
 export const analyzeAndAdoptJavaScriptArtifactFiles = async (
@@ -124,12 +206,31 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
     try {
       await setImmediate();
       if (classifyUnavailableSource(file, state, projection)) {
-        if (signal?.aborted === true) {
+        if (isSignalAborted(signal)) {
           interruption = new AnalysisCancelledError(
             "analyze_javascript_application",
-            { cause: signal.reason },
+            { cause: signal?.reason },
           );
           break;
+        }
+        if (
+          file.kind === "javascript" &&
+          !file.text.included &&
+          file.text.reason !== "outside-analysis-scope"
+        ) {
+          try {
+            await beforeFile(file, selectedFileIndex++, selectedFileCount);
+          } catch (cause: unknown) {
+            interruption = translateAnalysisInterruption(cause, signal);
+            break;
+          }
+          if (isSignalAborted(signal)) {
+            interruption = new AnalysisCancelledError(
+              "analyze_javascript_application",
+              { cause: signal?.reason },
+            );
+            break;
+          }
         }
         continue;
       }
@@ -139,7 +240,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         });
       await beforeFile(file, selectedFileIndex++, selectedFileCount);
       analysisStarted = true;
-      if (file.kind !== "javascript" || !file.text.included) {
+      if (file.kind !== "javascript") {
         const steps = analyzeArtifactFileSteps(file, {
           state,
           projectSemantics: function* (_file, ir) {
@@ -229,21 +330,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         break;
       }
     } catch (cause: unknown) {
-      if (cause instanceof AnalysisError) interruption = cause;
-      else if (
-        cause instanceof ArtifactReaderFailure &&
-        cause.reason === "cancelled"
-      )
-        interruption = translateArtifactFailure(
-          "analyze_javascript_application",
-          cause,
-        );
-      else if (signal?.aborted === true && cause === signal.reason)
-        interruption = new AnalysisCancelledError(
-          "analyze_javascript_application",
-          { cause },
-        );
-      else throw cause;
+      interruption = translateAnalysisInterruption(cause, signal);
       const scope = javascriptArtifactAnalysisScopes[file.kind];
       state.files.push({
         file,
@@ -415,7 +502,11 @@ function* analyzeArtifactFileSteps<
   const projected =
     semantics === null
       ? null
-      : yield* context.projectSemantics(file, semantics);
+      : yield* context.projectSemantics(
+          file,
+          semantics,
+          analysis.electron.call_paths,
+        );
   state.files.push({
     file,
     javascript: analysis,
