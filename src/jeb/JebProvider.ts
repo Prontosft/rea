@@ -1,5 +1,5 @@
 import {
-  JebMcpAcquisitionCleanupFailure,
+  JebMcpCleanupFailure,
   JebMcpPhysicalFailure,
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -121,6 +121,8 @@ export class JebProvider implements JebAnalysisPort {
     | Pick<z.infer<typeof clientInformation>, "version" | "gui_client">
     | undefined;
 
+  #informationGeneration: number | undefined;
+
   #identity(version: string | null | undefined): ProviderIdentity {
     return {
       ...JEB_PROVIDER_IDENTITY,
@@ -241,8 +243,10 @@ export class JebProvider implements JebAnalysisPort {
     readonly gui_client: boolean | null;
   }> {
     const information =
-      this.#clientInformation ??
-      (await this.#refreshClientInformation(operation, signal)).information;
+      this.#informationGeneration === this.#connection.sessionGeneration &&
+      this.#clientInformation !== undefined
+        ? this.#clientInformation
+        : (await this.#refreshClientInformation(operation, signal)).information;
     return {
       name: "jeb",
       version: information.version ?? null,
@@ -305,6 +309,7 @@ export class JebProvider implements JebAnalysisPort {
       version: information.version,
       gui_client: information.gui_client,
     };
+    this.#informationGeneration = this.#connection.sessionGeneration;
     return { information, payload };
   }
 
@@ -482,7 +487,7 @@ export class JebProvider implements JebAnalysisPort {
   }
 
   #providerFailure(operation: JebOperation, cause: unknown): AnalysisError {
-    if (cause instanceof JebMcpAcquisitionCleanupFailure)
+    if (cause instanceof JebMcpCleanupFailure)
       return analysisErrorWithCleanupFailure(
         this.#providerFailure(operation, cause.primaryFailure),
         cause.cleanupFailure,
