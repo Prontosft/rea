@@ -120,9 +120,10 @@ it.each(
           .replaceAll("SLOT", value.slot)
           .replaceAll("READ", value.read),
         expression: shape.read.replaceAll("READ", value.read),
-        // The public module/delegate owner retains unknown after the copy's child
-        // escapes into the new parent. Factory result selection can exclude it.
-        expected: shared ? !value.host || value.slot !== "make" : value.host,
+        // A definite write through the shared child selects its replacement.
+        // A freshly allocated child leaves the shallow copy's old child intact.
+        // Conditional/getter replacements below still retain an unknown loader.
+        expected: shared ? !value.host : value.host,
       })),
     ),
   ),

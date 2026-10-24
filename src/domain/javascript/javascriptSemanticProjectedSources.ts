@@ -251,31 +251,39 @@ const projectedSourceFactsAtRead = (
         typeof effect.path[index] !== "object" &&
         String(key) === String(effect.path[index]),
     );
+  // Capture admission is invariant for every candidate write at this read.
+  // Filter it once rather than scanning all member writes for every effect.
+  const replacedPrefixes =
+    capturedSelections.length === 0
+      ? []
+      : binding.memberWrites.flatMap((replacement) => {
+          const capture = captureForDepth(replacement.path.length);
+          return capture !== undefined &&
+            replacement.receiverIdentity === "definite" &&
+            t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
+            semanticTopLevelEffectFollowsCapture(
+              capture,
+              replacement.node,
+              state.parentsByNode,
+            )
+            ? [{ replacement, node: replacement.node }]
+            : [];
+        });
   const targetsReplacedPrefix = (
     effect: JavaScriptSemanticBindingState["memberWrites"][number],
   ): boolean =>
-    capturedSelections.length > 0 &&
-    binding.memberWrites.some((replacement) => {
-      const capture = captureForDepth(replacement.path.length);
+    replacedPrefixes.some(({ replacement, node }) => {
       const receiverAt = effect.receiverAt ?? effect.node;
       return (
-        capture !== undefined &&
         receiverAt !== undefined &&
-        replacement.receiverIdentity === "definite" &&
-        t.isAssignmentExpression(replacement.node, { operator: "=" }) &&
         samePrefix(replacement, effect) &&
-        semanticTopLevelEffectFollowsCapture(
-          capture,
-          replacement.node,
-          state.parentsByNode,
-        ) &&
         semanticDefiniteEffectPrecedesReference(
-          replacement.node,
+          node,
           receiverAt,
           state.parentsByNode,
         ) &&
         hasFreshProjectedReceiver(
-          replacement.node.right,
+          node.right,
           effect.path.slice(replacement.path.length, -1),
           state,
         )
@@ -363,6 +371,30 @@ const projectedSourceFactsAtRead = (
   )
     return undefined;
   const sources: ProjectedSource[] = [];
+  // One assignment can reach this owner through both stored and initializer
+  // traversal. Equal observations are one source, not alternative receivers.
+  const sourceKeys = new WeakMap<t.Node, Set<string>>();
+  const captureIds = new WeakMap<t.Node, number>();
+  let nextCaptureId = 0;
+  const addSource = (source: ProjectedSource): void => {
+    const captures = (source.capturedSelections ?? []).map((capture) => {
+      let id = captureIds.get(capture.at);
+      if (id === undefined) {
+        id = nextCaptureId++;
+        captureIds.set(capture.at, id);
+      }
+      return [id, capture.depth, capture.ownEnumerable === true];
+    });
+    const key = JSON.stringify([source.path, captures]);
+    let keys = sourceKeys.get(source.node);
+    if (keys === undefined) {
+      keys = new Set();
+      sourceKeys.set(source.node, keys);
+    }
+    if (keys.has(key)) return;
+    keys.add(key);
+    sources.push(source);
+  };
   for (const effect of writes) {
     if (!retainEligibility && superseded(effect)) continue;
     if (
@@ -389,7 +421,7 @@ const projectedSourceFactsAtRead = (
           choice === undefined ? [] : [choice],
         );
         if (selection !== null)
-          sources.push({
+          addSource({
             node: source.node,
             path: [...selection.projection, ...suffix],
             ...(selection.capturedSelectionDepth === undefined
@@ -415,7 +447,7 @@ const projectedSourceFactsAtRead = (
   for (const initializer of read.binding.initializers) {
     if (semanticReferenceIterationUnknown(initializer, state)) return undefined;
     if (semanticReferenceSourcesInactive(initializer, state)) continue;
-    sources.push({
+    addSource({
       node: initializer.node,
       path: [...initializer.projection, ...path],
     });
@@ -433,7 +465,7 @@ const projectedSourceFactsAtRead = (
         "identity",
       );
       if (projection !== null)
-        sources.push({
+        addSource({
           node: initializer.node,
           path: [...projection, ...suffix],
           capturedSelections:
