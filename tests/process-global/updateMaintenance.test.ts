@@ -506,6 +506,141 @@ describe("update subprocess boundaries", () => {
   });
 });
 
+describe("update subprocess output collection limits", () => {
+  it("rejects oversized finite output and reports the retention budget error", async () => {
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write("x".repeat(${String(UPDATE_COMMAND_OUTPUT_BYTES + 1)}))`,
+      ],
+      process.env,
+    );
+    expect(result).toEqual(
+      err(
+        `Update command output exceeded the ${String(UPDATE_COMMAND_OUTPUT_BYTES)}-byte complete-output retention budget; reply was not accepted.`,
+      ),
+    );
+  });
+
+  it("terminates an endless stream and enforces the default output limit when omitted", async () => {
+    const script = [
+      'const chunk = "x".repeat(64 * 1024);',
+      "const write = () => {",
+      "  while (process.stdout.write(chunk));",
+      '  process.stdout.once("drain", write);',
+      "};",
+      "write();",
+    ].join(" ");
+    const result = await runUpdateCommand(
+      [process.execPath, "-e", script],
+      process.env,
+    );
+    expect(result).toEqual(
+      err(
+        `Update command output exceeded the ${String(UPDATE_COMMAND_OUTPUT_BYTES)}-byte complete-output retention budget; reply was not accepted.`,
+      ),
+    );
+  });
+
+  it("enforces a custom collection limit when supplied", async () => {
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        'while(true) process.stdout.write("excessive output chunk ");',
+      ],
+      process.env,
+      "structured",
+      undefined,
+      1024,
+    );
+    expect(result).toEqual(
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
+    );
+  });
+
+  it("escalates to SIGKILL and reports the limit error when a child process ignores SIGTERM", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await runUpdateCommand(
+      [process.execPath, "-e", script],
+      process.env,
+      "structured",
+      undefined,
+      1024,
+      200,
+    );
+    expect(result).toEqual(
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
+    );
+  });
+
+  it("escalates immediately to SIGKILL when terminationGraceMs is zero", async () => {
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'while (true) process.stdout.write("excessive output chunk ");',
+    ].join(" ");
+    const result = await runUpdateCommand(
+      [process.execPath, "-e", script],
+      process.env,
+      "structured",
+      undefined,
+      1024,
+      0,
+    );
+    expect(result).toEqual(
+      err(
+        "Update command output exceeded the 1024-byte complete-output retention budget; reply was not accepted.",
+      ),
+    );
+  });
+
+  it("enforces the shared output budget across stdout and stderr when each stream is below the limit", async () => {
+    // 60 bytes on stdout and 50 bytes on stderr; neither stream exceeds the 100-byte limit alone,
+    // but the combined 110 bytes exceeds the shared budget.
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        'process.stdout.write("a".repeat(60)); process.stderr.write("b".repeat(50));',
+      ],
+      process.env,
+      "structured",
+      undefined,
+      100,
+    );
+    expect(result).toEqual(
+      err(
+        "Update command output exceeded the 100-byte complete-output retention budget; reply was not accepted.",
+      ),
+    );
+  });
+
+  it("succeeds when combined stdout and stderr output totals exactly the configured limit", async () => {
+    // 60 bytes on stdout and 40 bytes on stderr total exactly 100 bytes.
+    const stdoutContent = "a".repeat(60);
+    const result = await runUpdateCommand(
+      [
+        process.execPath,
+        "-e",
+        `process.stdout.write(${JSON.stringify(stdoutContent)}); process.stderr.write("b".repeat(40));`,
+      ],
+      process.env,
+      "structured",
+      undefined,
+      100,
+    );
+    expect(result).toEqual(ok(stdoutContent));
+  });
+});
+
 const createBunUpdateFixture = async (
   root: string,
   bunVersion: string,
