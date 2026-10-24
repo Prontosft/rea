@@ -70,6 +70,7 @@ export const existingMaintenanceScope = async (
     entryPoint,
     {
       environment,
+      includeRegistrationEvidence: true,
       ...(resources === undefined ? {} : { resources }),
     },
   );
