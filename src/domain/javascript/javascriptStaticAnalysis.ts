@@ -41,7 +41,6 @@ import {
   inspectCall,
   inspectRpcNode,
   finishRpcScanSteps,
-  indexVitePreloadDependencyTable,
 } from "./javascriptStaticAnalysisCalls.js";
 import {
   finishBundlerExports,
@@ -49,7 +48,10 @@ import {
   inspectBundlerBootstrap,
   inspectEsbuildWrapper,
 } from "./javascriptStaticAnalysisBundler.js";
-import { finalizeLocatedFindings } from "./javascriptStaticAnalysisFindings.js";
+import {
+  finalizeLocatedFindings,
+  finalizeLocatedFindingsSteps,
+} from "./javascriptStaticAnalysisFindings.js";
 import {
   createJavaScriptAnalysisAccumulator,
   type JavaScriptAnalysisAccumulator as AnalysisAccumulator,
@@ -67,6 +69,7 @@ import {
 } from "./javascriptSourceParser.js";
 
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
+import { classifyParsedJavaScriptViteDependencySpecifiersSteps } from "./javascriptViteDependencies.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
   isTypeOnlyExportDeclaration,
@@ -107,16 +110,17 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     file.program,
     bindings,
   );
+  const viteDependencySpecifiers =
+    yield* classifyParsedJavaScriptViteDependencySpecifiersSteps(
+      file,
+      bindings,
+    );
   const findings: JavaScriptFindingContext = {
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
     rendererLoad: (callee, site) =>
       isElectronRendererLoad(callee, site, findings, index),
     source,
     accumulator,
-    vitePreloadDependencyTable: indexVitePreloadDependencyTable(
-      file.program,
-      bindings.erasedSyntaxNodes,
-    ),
     openReceiverFacts: receivers.openReceivers,
     electronBindings: electronIdentity.bindings,
     electronExportIntact: electronIdentity.intactExport,
@@ -130,7 +134,18 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     index,
     (fact) => addEndpoint(findings, { ...fact, kind: "route" }),
   );
-  yield* traverseStaticSourceSteps(file, findings, bindings, routeScan);
+  const viteReferencePositions = yield* traverseStaticSourceSteps(
+    file,
+    findings,
+    bindings,
+    viteDependencySpecifiers,
+    routeScan,
+  );
+  yield* retainViteReferencesSteps(
+    findings,
+    viteDependencySpecifiers,
+    viteReferencePositions,
+  );
   const routes = yield* routeScan.finishSteps();
   if (accumulator.bundlerExportHelpersObserved)
     yield* index.indexMemberMutationFactsSteps();
@@ -157,25 +172,103 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     electronIdentity,
   );
   addSourceMapDirectives(source, file.comments ?? [], accumulator);
-  return finalizeStaticAnalysis(source, file, accumulator, bindings, routes);
+  const references = yield* finalizeLocatedFindingsSteps(
+    accumulator.references,
+    accumulator.moduleRangeIndex,
+  );
+  let hasElectronReference = false;
+  for (const [index, { specifier }] of references.entries()) {
+    if (index > 0 && index % 1024 === 0) yield;
+    if (specifier !== null && ELECTRON_MODULE.test(specifier)) {
+      hasElectronReference = true;
+      break;
+    }
+  }
+  return finalizeStaticAnalysis(source, file, accumulator, bindings, routes, {
+    references,
+    hasElectronReference,
+  });
 }
 
 function* traverseStaticSourceSteps(
   file: ParsedJavaScriptSource,
   findings: JavaScriptFindingContext,
   bindings: JavaScriptSemanticAnalysisState,
+  viteCalls: ReadonlyMap<
+    t.CallExpression | t.OptionalCallExpression,
+    readonly (string | undefined)[]
+  >,
   routeScan: JavaScriptRouteScan,
-): Generator<void, void> {
+): Generator<
+  void,
+  ReadonlyMap<t.CallExpression | t.OptionalCallExpression, number>
+> {
+  const positions = new Map<
+    t.CallExpression | t.OptionalCallExpression,
+    number
+  >();
   yield* traverseJavaScriptAstSteps(file, {
     enter: (node, parent) => {
       findings.accumulator.visitedNodes += 1;
       routeScan.inspect(node, parent);
-      if (!bindings.erasedSyntaxNodes.has(node))
+      if (!bindings.erasedSyntaxNodes.has(node)) {
         inspectNode(node, findings, bindings);
+        if (
+          (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+          viteCalls.has(node)
+        )
+          positions.set(node, findings.accumulator.references.length);
+      }
       return undefined;
     },
   });
   yield* finishRpcScanSteps(findings);
+  return positions;
+}
+
+/** merge normalized Vite values in batches without changing discovery order. */
+function* retainViteReferencesSteps(
+  findings: JavaScriptFindingContext,
+  calls: ReadonlyMap<
+    t.CallExpression | t.OptionalCallExpression,
+    readonly (string | undefined)[]
+  >,
+  positions: ReadonlyMap<t.CallExpression | t.OptionalCallExpression, number>,
+): Generator<void> {
+  if (calls.size === 0) return;
+  const { accumulator } = findings;
+  const genericCount = accumulator.references.length;
+  const ordered: typeof accumulator.references = [];
+  let genericIndex = 0;
+  let examined = 0;
+  for (const [node, specifiers] of calls) {
+    const position = positions.get(node);
+    if (examined++ % 1024 === 0) yield;
+    if (position === undefined) continue;
+    while (genericIndex < position) {
+      if (examined++ % 1024 === 0) yield;
+      const reference = accumulator.references[genericIndex++];
+      if (reference !== undefined) ordered.push(reference);
+    }
+    for (const specifier of specifiers) {
+      if (examined++ % 1024 === 0) yield;
+      const before = accumulator.references.length;
+      if (specifier === undefined) accumulator.unknownFindings += 1;
+      addReference(findings, { node, kind: "dynamic-import", specifier });
+      const reference = accumulator.references[before];
+      if (reference !== undefined) ordered.push(reference);
+    }
+  }
+  while (genericIndex < genericCount) {
+    if (examined++ % 1024 === 0) yield;
+    const reference = accumulator.references[genericIndex++];
+    if (reference !== undefined) ordered.push(reference);
+  }
+  for (const [index, reference] of ordered.entries()) {
+    if (index % 1024 === 0) yield;
+    accumulator.references[index] = reference;
+  }
+  accumulator.references.length = ordered.length;
 }
 
 const finalizeStaticAnalysis = (
@@ -184,7 +277,12 @@ const finalizeStaticAnalysis = (
   accumulator: AnalysisAccumulator,
   bindings: JavaScriptSemanticAnalysisState,
   routes: JavaScriptRouteSourceFacts,
+  referenceFacts: {
+    readonly references: JavaScriptStaticAnalysis["references"];
+    readonly hasElectronReference: boolean;
+  },
 ): JavaScriptStaticAnalysis => {
+  const { references, hasElectronReference } = referenceFacts;
   const parserErrors = file.errors.length;
   const limitations = [
     ...(bindings.valueResourceLimits.has("alias-selections")
@@ -218,12 +316,7 @@ const finalizeStaticAnalysis = (
           "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
         ]
       : []),
-    ...(accumulator.references.some(
-      ({ value }) =>
-        value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
-    )
-      ? [ELECTRON_IDENTITY_LIMITATION]
-      : []),
+    ...(hasElectronReference ? [ELECTRON_IDENTITY_LIMITATION] : []),
     "JavaScript syntax was parsed as data and was never evaluated.",
   ];
   return {
@@ -235,10 +328,7 @@ const finalizeStaticAnalysis = (
         : "complete",
     parse_error_count: parserErrors,
     visited_ast_nodes: accumulator.visitedNodes,
-    references: finalizeLocatedFindings(
-      accumulator.references,
-      accumulator.moduleRangeIndex,
-    ),
+    references,
     endpoints: finalizeLocatedFindings(
       accumulator.endpoints,
       accumulator.moduleRangeIndex,
@@ -319,11 +409,10 @@ const inspectNode = (
       ) === "factory-loader"
     )
       accumulator.bundlerExportHelpersObserved = true;
-    inspectCall(source, node, findings, bindings);
+    inspectCall(node, findings, bindings);
   } else if (t.isOptionalCallExpression(node)) {
-    inspectCall(source, node, findings, bindings);
-  } else if (t.isNewExpression(node))
-    inspectCall(source, node, findings, bindings);
+    inspectCall(node, findings, bindings);
+  } else if (t.isNewExpression(node)) inspectCall(node, findings, bindings);
   if (t.isTSImportEqualsDeclaration(node)) {
     const specifier = semanticImportEqualsSpecifier(node);
     if (specifier !== null)

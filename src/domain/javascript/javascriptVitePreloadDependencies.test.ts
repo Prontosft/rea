@@ -88,9 +88,11 @@ describe("Vite preload dependency recovery", () => {
     ["type DependencyHelper = typeof __vite__mapDeps;", "./original.js"],
     ["const labels = { __vite__mapDeps() {} };", "./original.js"],
     ["const labels = { [__vite__mapDeps]: true };", null],
-    ["const dependencyTable = __vite__mapDeps.f;", null],
+    ["const dependencyTable = __vite__mapDeps.f;", "./original.js"],
+    ["export const dependencyTable = __vite__mapDeps.f;", null],
+    ["opaque(__vite__mapDeps.f);", null],
   ])(
-    "distinguishes an erased type query from a runtime helper escape: %s",
+    "distinguishes erased syntax and inert reads from runtime helper escapes: %s",
     (read, expected) => {
       const analysis = analyzeJavaScriptStaticSource(`
       const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
