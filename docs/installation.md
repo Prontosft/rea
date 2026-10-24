@@ -614,11 +614,14 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Factory Droid      | `droid`          |
 | Trae               | `trae`           |
 | WorkBuddy          | `workbuddy`      |
+| MiniMax Code       | `minimax_code`   |
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
 
 `droid`, `dsh`, `kimi`, `qoder`, `trae`, `workbuddy`, and `zcode` require
 `rea-agents@6.5.0` or later. The 6.4.0 registry check above does not cover them.
+`minimax_code` is not in `rea-agents@6.7.0` or earlier; it requires the first
+release after 6.7.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.

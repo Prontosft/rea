@@ -110,6 +110,10 @@ interface ClientDefinitionBase {
   ) => NonNullable<SetupClient["geminiSettings"]>;
 }
 
+/** MiniMax Code honors explicit data-dir overrides before `~/.minimax`. */
+const minimaxDirectory = ({ home, env }: ClientPathContext): string =>
+  env.MINIMAX_DATA_DIR || env.MAVIS_DATA_DIR || join(home, ".minimax");
+
 /** XDG treats an empty config-home value as unset. */
 const xdgConfigHome = ({ home, env }: ClientPathContext): string =>
   env.XDG_CONFIG_HOME || join(home, ".config");
@@ -614,6 +618,18 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     skillPath: [".workbuddy", "skills"],
     configPath: [".workbuddy", "mcp.json"],
     markerPath: [".workbuddy"],
+    format: "json",
+  },
+  {
+    // MiniMax Code reads `<dataDir>/mcp.json` (plain `mcpServers` JSON) and
+    // personal skills from `<dataDir>/skills`.
+    name: "minimax_code",
+    displayName: "MiniMax Code",
+    skillPath: (context: ClientPathContext) =>
+      join(minimaxDirectory(context), "skills"),
+    configPath: (context: ClientPathContext) =>
+      join(minimaxDirectory(context), "mcp.json"),
+    markerPath: minimaxDirectory,
     format: "json",
   },
   {
