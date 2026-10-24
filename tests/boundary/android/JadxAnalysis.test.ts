@@ -8,6 +8,7 @@ import {
   androidInputSchemas,
   androidResultSchemas,
 } from "../../../src/domain/android/androidAnalysis.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 
 const summary = {
   full_name: "fixture.Target",
@@ -332,6 +333,92 @@ it("publishes exact DEX prototypes instead of discarding bridge metadata", async
     ],
   });
 });
+
+const constantFields = [
+  {
+    name: "MAX_SIZE",
+    type: "int",
+    def_pos: 0,
+    dex_static_value: { type: "int", value: 1024 },
+  },
+  {
+    name: "PACKET_FLAG_CONFIG",
+    type: "long",
+    def_pos: 0,
+    dex_static_value: { type: "long", value: "-9223372036854775808" },
+  },
+  {
+    name: "TAG",
+    type: "java.lang.String",
+    def_pos: 0,
+    dex_static_value: { type: "string", value: "flags" },
+  },
+  { name: "INSTANCE", type: "fixture.Target", def_pos: 0 },
+];
+
+const inspectClassWithFields = (fields: JsonValue[]) =>
+  analyzeJadxRequest(
+    {
+      listClasses: () =>
+        Promise.reject(new Error("unexpected class inventory call")),
+      json: () =>
+        Promise.resolve({ ...summary, field_count: fields.length, fields }),
+      text: () => Promise.reject(new Error("unexpected text call")),
+    },
+    {
+      operation: "inspect_android_class",
+      input: androidInputSchemas.inspect_android_class.parse({
+        path: "/fixture.apk",
+        class_name: "fixture.Target",
+      }),
+    },
+    {} as never,
+    engine,
+  );
+
+it("reports DEX static values of static final fields without a static initializer", async () => {
+  const result = await inspectClassWithFields(constantFields);
+  expect(result).toMatchObject({
+    fields: [
+      {
+        name: "MAX_SIZE",
+        reported_type: "int",
+        dex_static_value: { type: "int", value: 1024 },
+      },
+      {
+        name: "PACKET_FLAG_CONFIG",
+        reported_type: "long",
+        dex_static_value: { type: "long", value: "-9223372036854775808" },
+      },
+      {
+        name: "TAG",
+        reported_type: "java.lang.String",
+        dex_static_value: { type: "string", value: "flags" },
+      },
+      {
+        name: "INSTANCE",
+        reported_type: "fixture.Target",
+        dex_static_value: null,
+      },
+    ],
+  });
+});
+
+it.each([
+  { type: "long", value: -9223372036854775808 },
+  { type: "int", value: "1024" },
+  { type: "double", value: 0.5 },
+  { type: "enum", value: "fixture.Mode.ON" },
+])(
+  "refuses a lossy or unsupported DEX static value $type",
+  async (dex_static_value) => {
+    await expect(
+      inspectClassWithFields([
+        { name: "VALUE", type: "int", def_pos: 0, dex_static_value },
+      ]),
+    ).rejects.toThrow("JADX class summary failed or was malformed");
+  },
+);
 
 it("traces only the selected overloaded method and checks the producer identity", async () => {
   const calls: Record<string, unknown>[] = [];

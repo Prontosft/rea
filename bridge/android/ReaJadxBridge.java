@@ -3,6 +3,8 @@ import com.google.gson.*;
 import io.modelcontextprotocol.kotlin.sdk.server.*;
 import io.modelcontextprotocol.kotlin.sdk.types.*;
 import jadx.api.*;
+import jadx.api.plugins.input.data.annotations.EncodedValue;
+import jadx.api.plugins.input.data.attributes.JadxAttrType;
 import jadx.api.plugins.input.data.ICodeReader;
 import jadx.api.plugins.input.data.IMethodRef;
 import jadx.api.plugins.input.insns.InsnIndexType;
@@ -265,8 +267,13 @@ class ReaJadxBridge {
           }).toList();
           List<Map<String, Object>> fields = node.getFields().stream()
               .sorted(Comparator.comparing(FieldNode::getAlias))
-              .map(field -> Map.<String, Object>of("name", field.getAlias(),
-                  "type", field.getType().toString(), "def_pos", 0)).toList();
+              .map(field -> {
+                Map<String, Object> entry = new LinkedHashMap<>(Map.of("name", field.getAlias(),
+                    "type", field.getType().toString(), "def_pos", 0));
+                Map<String, Object> value = dexStaticValue(field);
+                if (value != null) entry.put("dex_static_value", value);
+                return Collections.unmodifiableMap(entry);
+              }).toList();
           List<String> inner = node.getInnerClasses().stream().map(ClassNode::getFullName).toList();
           Map<String, Object> summary = Map.of(
               "full_name", cls.getFullName(), "name", cls.getName(),
@@ -287,6 +294,28 @@ class ReaJadxBridge {
     if (candidates.size() != 1) throw new InputFailure("class_name", "Ambiguous metadata class identity: " + name
         + "; raw identities: " + candidates.stream().map(candidate -> candidate.node().getRawName()).toList());
     return candidates.get(0);
+  }
+
+  /** A static final field's class-definition static value; a static initializer can still assign it. */
+  private static Map<String, Object> dexStaticValue(FieldNode field) {
+    if (!field.getAccessFlags().isStatic() || !field.getAccessFlags().isFinal()) return null;
+    EncodedValue encoded = field.get(JadxAttrType.CONSTANT_VALUE);
+    if (encoded == null) return null;
+    Object value = encoded.getValue();
+    // JADX also attaches the shared null to static finals without a value, so null is never reported.
+    // Wide and floating values keep their Java text instead of a lossy JSON number.
+    return switch (encoded.getType()) {
+      case ENCODED_BOOLEAN -> Map.of("type", "boolean", "value", value);
+      case ENCODED_BYTE -> Map.of("type", "byte", "value", value);
+      case ENCODED_SHORT -> Map.of("type", "short", "value", value);
+      case ENCODED_CHAR -> Map.of("type", "char", "value", (int) (Character) value);
+      case ENCODED_INT -> Map.of("type", "int", "value", value);
+      case ENCODED_LONG -> Map.of("type", "long", "value", value.toString());
+      case ENCODED_FLOAT -> Map.of("type", "float", "value", value.toString());
+      case ENCODED_DOUBLE -> Map.of("type", "double", "value", value.toString());
+      case ENCODED_STRING -> Map.of("type", "string", "value", value);
+      default -> null;
+    };
   }
 
   private List<MethodSnapshot> methods(ClassSnapshot cls, JsonObject args) {
@@ -522,7 +551,7 @@ class ReaJadxBridge {
     SessionHolder holder = new SessionHolder(defaults);
     ServerCapabilities capabilities = new ServerCapabilities(
         new ServerCapabilities.Tools(null), null, null, null, null, null, null, Map.of());
-    Server server = new Server(new Implementation("rea-jadx-bridge", "5", null, null, null),
+    Server server = new Server(new Implementation("rea-jadx-bridge", "6", null, null, null),
         new ServerOptions(capabilities), "", ignored -> Unit.INSTANCE);
     SessionToolsKt.registerSessionTools(server, holder);
     ClassToolsKt.registerClassTools(server, holder);

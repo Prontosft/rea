@@ -290,6 +290,7 @@ export const analyzeJadxRequest = async (
       fields: summary.fields.map((field) => ({
         name: field.name,
         reported_type: field.type,
+        dex_static_value: field.dex_static_value ?? null,
       })),
       inner_classes: summary.inner_classes,
     });
